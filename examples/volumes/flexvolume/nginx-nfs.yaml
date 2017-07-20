@@ -4,6 +4,7 @@ metadata:
   name: nginx-nfs
   namespace: default
 spec:
+  nodeName: "kubernetes-minion-group-7bw3"
   containers:
   - name: nginx-nfs
     image: nginx
@@ -15,8 +16,8 @@ spec:
   volumes:
   - name: test
     flexVolume:
-      driver: "k8s/nfs"
+      driver: "nfs"
       fsType: "nfs"
       options:
-        server: "172.16.0.25"
-        share: "dws_nas_scratch"
+        server: "10.244.3.6"
+        share: "exports"

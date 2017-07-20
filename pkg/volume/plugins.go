@@ -60,6 +60,19 @@ type VolumeOptions struct {
 	Parameters map[string]string
 }
 
+//type PluginStub interface {
+//	// Init initializes the plugin.  This will be called exactly once
+//	// before any New* calls are made - implementations of plugins may
+//	// depend on this.
+//	Init(host VolumeHost) error
+//}
+
+type MetaPlugin interface {
+	VolumePlugin
+
+	Probe() []VolumePlugin
+}
+
 // VolumePlugin is an interface to volume plugins that can be used on a
 // kubernetes node (e.g. by kubelet) to instantiate and manage volumes.
 type VolumePlugin interface {
@@ -244,6 +257,7 @@ type VolumeHost interface {
 type VolumePluginMgr struct {
 	mutex   sync.Mutex
 	plugins map[string]VolumePlugin
+	flexPlugin MetaPlugin
 	Host    VolumeHost
 }
 
@@ -348,26 +362,35 @@ func (pm *VolumePluginMgr) InitPlugins(plugins []VolumePlugin, host VolumeHost) 
 		pm.plugins = map[string]VolumePlugin{}
 	}
 
-	allErrs := []error{}
-	for _, plugin := range plugins {
-		name := plugin.GetPluginName()
-		if errs := validation.IsQualifiedName(name); len(errs) != 0 {
-			allErrs = append(allErrs, fmt.Errorf("volume plugin has invalid name: %q: %s", name, strings.Join(errs, ";")))
-			continue
-		}
+	return pm.initPluginsHelper(plugins)
+}
 
-		if _, found := pm.plugins[name]; found {
-			allErrs = append(allErrs, fmt.Errorf("volume plugin %q was registered more than once", name))
-			continue
+func (pm *VolumePluginMgr) initPluginsHelper(plugins []VolumePlugin) error {
+	allErrs := []error{}
+	for _, pluginStub := range plugins {
+		if plugin, isMetaPlugin := pluginStub.(MetaPlugin); isMetaPlugin {
+			pm.flexPlugin = plugin
+		} else {
+			plugin := pluginStub.(VolumePlugin)
+			name := plugin.GetPluginName()
+			if errs := validation.IsQualifiedName(name); len(errs) != 0 {
+				allErrs = append(allErrs, fmt.Errorf("volume plugin has invalid name: %q: %s", name, strings.Join(errs, ";")))
+				continue
+			}
+
+			if _, found := pm.plugins[name]; found {
+				allErrs = append(allErrs, fmt.Errorf("volume plugin %q was registered more than once", name))
+				continue
+			}
+			err := plugin.Init(pm.Host)
+			if err != nil {
+				glog.Errorf("Failed to load volume plugin %s, error: %s", plugin, err.Error())
+				allErrs = append(allErrs, err)
+				continue
+			}
+			pm.plugins[name] = plugin
+			glog.V(1).Infof("Loaded volume plugin %q", name)
 		}
-		err := plugin.Init(host)
-		if err != nil {
-			glog.Errorf("Failed to load volume plugin %s, error: %s", plugin, err.Error())
-			allErrs = append(allErrs, err)
-			continue
-		}
-		pm.plugins[name] = plugin
-		glog.V(1).Infof("Loaded volume plugin %q", name)
 	}
 	return utilerrors.NewAggregate(allErrs)
 }
@@ -379,12 +402,29 @@ func (pm *VolumePluginMgr) FindPluginBySpec(spec *Spec) (VolumePlugin, error) {
 	pm.mutex.Lock()
 	defer pm.mutex.Unlock()
 
+	// TODO remove
 	matches := []string{}
 	for k, v := range pm.plugins {
+		if strings.Split(v.GetPluginName(), "-")[0] == "flexvolume" {
+			continue
+		}
 		if v.CanSupport(spec) {
 			matches = append(matches, k)
 		}
 	}
+
+	if len(matches) == 0 {
+		pm.initPluginsHelper(pm.flexPlugin.Probe()) // TODO after flexvolume driver is loaded, this will spam error logs.
+		// TODO this needs to be moved after the plugin check.
+
+		matches = []string{}
+		for k, v := range pm.plugins {
+			if v.CanSupport(spec) {
+				matches = append(matches, k)
+			}
+		}
+	}
+
 	if len(matches) == 0 {
 		return nil, fmt.Errorf("no volume plugin matched")
 	}
@@ -400,13 +440,31 @@ func (pm *VolumePluginMgr) FindPluginByName(name string) (VolumePlugin, error) {
 	pm.mutex.Lock()
 	defer pm.mutex.Unlock()
 
-	// Once we can get rid of legacy names we can reduce this to a map lookup.
+	// TODO remove
 	matches := []string{}
 	for k, v := range pm.plugins {
+		if strings.Split(v.GetPluginName(), "-")[0] == "flexvolume" {
+			continue
+		}
 		if v.GetPluginName() == name {
 			matches = append(matches, k)
 		}
 	}
+
+	if len(matches) == 0 {
+		pm.initPluginsHelper(pm.flexPlugin.Probe()) // TODO after flexvolume driver is loaded, this will spam error logs.
+		// TODO this needs to be moved after the plugin check.
+
+		// Once we can get rid of legacy names we can reduce this to a map lookup.
+		matches = []string{}
+		for k, v := range pm.plugins {
+			if v.GetPluginName() == name {
+				matches = append(matches, k)
+			}
+		}
+	}
+
+
 	if len(matches) == 0 {
 		return nil, fmt.Errorf("no volume plugin matched")
 	}
