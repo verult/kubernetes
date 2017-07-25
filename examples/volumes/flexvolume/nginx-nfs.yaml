@@ -4,7 +4,7 @@ metadata:
   name: nginx-nfs
   namespace: default
 spec:
-  nodeName: "kubernetes-minion-group-7bw3"
+  nodeName: "kubernetes-minion-group-5f9c"
   containers:
   - name: nginx-nfs
     image: nginx
@@ -19,5 +19,5 @@ spec:
       driver: "nfs"
       fsType: "nfs"
       options:
-        server: "10.244.3.6"
+        server: "10.244.2.12"
         share: "exports"

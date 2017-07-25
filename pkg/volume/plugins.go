@@ -67,12 +67,6 @@ type VolumeOptions struct {
 //	Init(host VolumeHost) error
 //}
 
-type MetaPlugin interface {
-	VolumePlugin
-
-	Probe() []VolumePlugin
-}
-
 // VolumePlugin is an interface to volume plugins that can be used on a
 // kubernetes node (e.g. by kubelet) to instantiate and manage volumes.
 type VolumePlugin interface {
@@ -251,13 +245,14 @@ type VolumeHost interface {
 
 	// Returns the labels on the node
 	GetNodeLabels() (map[string]string, error)
+
+	ProbeFlexVolumePlugins() []VolumePlugin
 }
 
 // VolumePluginMgr tracks registered plugins.
 type VolumePluginMgr struct {
 	mutex   sync.Mutex
 	plugins map[string]VolumePlugin
-	flexPlugin MetaPlugin
 	Host    VolumeHost
 }
 
@@ -367,30 +362,25 @@ func (pm *VolumePluginMgr) InitPlugins(plugins []VolumePlugin, host VolumeHost) 
 
 func (pm *VolumePluginMgr) initPluginsHelper(plugins []VolumePlugin) error {
 	allErrs := []error{}
-	for _, pluginStub := range plugins {
-		if plugin, isMetaPlugin := pluginStub.(MetaPlugin); isMetaPlugin {
-			pm.flexPlugin = plugin
-		} else {
-			plugin := pluginStub.(VolumePlugin)
-			name := plugin.GetPluginName()
-			if errs := validation.IsQualifiedName(name); len(errs) != 0 {
-				allErrs = append(allErrs, fmt.Errorf("volume plugin has invalid name: %q: %s", name, strings.Join(errs, ";")))
-				continue
-			}
-
-			if _, found := pm.plugins[name]; found {
-				allErrs = append(allErrs, fmt.Errorf("volume plugin %q was registered more than once", name))
-				continue
-			}
-			err := plugin.Init(pm.Host)
-			if err != nil {
-				glog.Errorf("Failed to load volume plugin %s, error: %s", plugin, err.Error())
-				allErrs = append(allErrs, err)
-				continue
-			}
-			pm.plugins[name] = plugin
-			glog.V(1).Infof("Loaded volume plugin %q", name)
+	for _, plugin := range plugins {
+		name := plugin.GetPluginName()
+		if errs := validation.IsQualifiedName(name); len(errs) != 0 {
+			allErrs = append(allErrs, fmt.Errorf("volume plugin has invalid name: %q: %s", name, strings.Join(errs, ";")))
+			continue
 		}
+
+		if _, found := pm.plugins[name]; found {
+			allErrs = append(allErrs, fmt.Errorf("volume plugin %q was registered more than once", name))
+			continue
+		}
+		err := plugin.Init(pm.Host)
+		if err != nil {
+			glog.Errorf("Failed to load volume plugin %s, error: %s", plugin, err.Error())
+			allErrs = append(allErrs, err)
+			continue
+		}
+		pm.plugins[name] = plugin
+		glog.V(1).Infof("Loaded volume plugin %q", name)
 	}
 	return utilerrors.NewAggregate(allErrs)
 }
@@ -414,7 +404,7 @@ func (pm *VolumePluginMgr) FindPluginBySpec(spec *Spec) (VolumePlugin, error) {
 	}
 
 	if len(matches) == 0 {
-		pm.initPluginsHelper(pm.flexPlugin.Probe()) // TODO after flexvolume driver is loaded, this will spam error logs.
+		pm.initPluginsHelper(pm.Host.ProbeFlexVolumePlugins()) // TODO after flexvolume driver is loaded, this will spam error logs.
 		// TODO this needs to be moved after the plugin check.
 
 		matches = []string{}
@@ -452,7 +442,7 @@ func (pm *VolumePluginMgr) FindPluginByName(name string) (VolumePlugin, error) {
 	}
 
 	if len(matches) == 0 {
-		pm.initPluginsHelper(pm.flexPlugin.Probe()) // TODO after flexvolume driver is loaded, this will spam error logs.
+		pm.initPluginsHelper(pm.Host.ProbeFlexVolumePlugins()) // TODO after flexvolume driver is loaded, this will spam error logs.
 		// TODO this needs to be moved after the plugin check.
 
 		// Once we can get rid of legacy names we can reduce this to a map lookup.
@@ -463,7 +453,6 @@ func (pm *VolumePluginMgr) FindPluginByName(name string) (VolumePlugin, error) {
 			}
 		}
 	}
-
 
 	if len(matches) == 0 {
 		return nil, fmt.Errorf("no volume plugin matched")

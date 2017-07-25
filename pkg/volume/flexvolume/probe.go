@@ -19,63 +19,23 @@ package flexvolume
 import (
 	"io/ioutil"
 
-	"k8s.io/kubernetes/pkg/volume"
-	"k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"github.com/golang/glog"
+	"k8s.io/kubernetes/pkg/volume"
 )
 
+type FlexVolumeProber interface {
+	Probe() []volume.VolumePlugin
+}
 
-type flexVolumeMetaPlugin struct {
+type flexVolumeProber struct {
 	pluginDir string
 }
 
-func (*flexVolumeMetaPlugin) Init(host volume.VolumeHost) error {
-	panic("implement me")
+func NewFlexVolumeProber(pluginDir string) FlexVolumeProber {
+	return &flexVolumeProber{pluginDir: pluginDir}
 }
 
-func (*flexVolumeMetaPlugin) GetPluginName() string {
-	panic("implement me")
-}
-
-func (*flexVolumeMetaPlugin) GetVolumeName(spec *volume.Spec) (string, error) {
-	panic("implement me")
-}
-
-func (*flexVolumeMetaPlugin) CanSupport(spec *volume.Spec) bool {
-	panic("implement me")
-}
-
-func (*flexVolumeMetaPlugin) RequiresRemount() bool {
-	panic("implement me")
-}
-
-func (*flexVolumeMetaPlugin) NewMounter(spec *volume.Spec, podRef *v1.Pod, opts volume.VolumeOptions) (volume.Mounter, error) {
-	panic("implement me")
-}
-
-func (*flexVolumeMetaPlugin) NewUnmounter(name string, podUID types.UID) (volume.Unmounter, error) {
-	panic("implement me")
-}
-
-func (*flexVolumeMetaPlugin) ConstructVolumeSpec(volumeName, mountPath string) (*volume.Spec, error) {
-	panic("implement me")
-}
-
-func (*flexVolumeMetaPlugin) SupportsMountOption() bool {
-	panic("implement me")
-}
-
-func (*flexVolumeMetaPlugin) SupportsBulkVolumeVerification() bool {
-	panic("implement me")
-}
-
-//func (plugin *flexVolumeMetaPlugin) Init(host volume.VolumeHost) error {
-//	// TODO implement
-//	return nil
-//}
-
-func (plugin *flexVolumeMetaPlugin) Probe() []volume.VolumePlugin {
+func (plugin *flexVolumeProber) Probe() []volume.VolumePlugin {
 	plugins := []volume.VolumePlugin{}
 
 	glog.Info("Probing Flexvolume directory...")
@@ -99,11 +59,8 @@ func (plugin *flexVolumeMetaPlugin) Probe() []volume.VolumePlugin {
 	return plugins
 }
 
-
-
 // This is the primary entrypoint for volume plugins.
 func ProbeVolumePlugins(pluginDir string) []volume.VolumePlugin {
-	return []volume.VolumePlugin {
-		&flexVolumeMetaPlugin{pluginDir: pluginDir},
-	}
+	// TODO fix
+	return []volume.VolumePlugin{}
 }

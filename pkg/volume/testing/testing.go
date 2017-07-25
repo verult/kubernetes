@@ -40,6 +40,7 @@ import (
 	utilstrings "k8s.io/kubernetes/pkg/util/strings"
 	. "k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/pkg/volume/util/volumehelper"
+	"k8s.io/kubernetes/pkg/volume/flexvolume"
 )
 
 // fakeVolumeHost is useful for testing volume plugins.
@@ -142,6 +143,11 @@ func (f *fakeVolumeHost) GetConfigMapFunc() func(namespace, name string) (*v1.Co
 
 func (f *fakeVolumeHost) GetNodeLabels() (map[string]string, error) {
 	return map[string]string{"test-label": "test-value"}, nil
+}
+
+func (f *fakeVolumeHost) ProbeFlexVolumePlugins() []VolumePlugin {
+	// TODO implement
+	return nil
 }
 
 func ProbeVolumePlugins(config VolumeConfig) []VolumePlugin {
