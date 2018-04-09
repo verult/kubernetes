@@ -38,6 +38,7 @@ import (
 	compute "google.golang.org/api/compute/v1"
 	"google.golang.org/api/googleapi"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	"k8s.io/kubernetes/pkg/cloudprovider/providers/gce/cloud/meta"
 	"k8s.io/kubernetes/pkg/features"
 )
 
@@ -65,7 +66,7 @@ type diskServiceManager interface {
 		sizeGb int64,
 		tagsStr string,
 		diskType string,
-		zone string) (gceObject, error)
+		zone string) error
 
 	// Creates a new regional persistent disk on GCE with the given disk spec.
 	CreateRegionalDiskOnCloudProvider(
@@ -73,41 +74,35 @@ type diskServiceManager interface {
 		sizeGb int64,
 		tagsStr string,
 		diskType string,
-		zones sets.String) (gceObject, error)
+		zones sets.String) error
 
 	// Deletes the persistent disk from GCE with the given diskName.
-	DeleteDiskOnCloudProvider(zone string, disk string) (gceObject, error)
+	DeleteDiskOnCloudProvider(zone string, disk string) error
 
 	// Deletes the regional persistent disk from GCE with the given diskName.
-	DeleteRegionalDiskOnCloudProvider(diskName string) (gceObject, error)
+	DeleteRegionalDiskOnCloudProvider(diskName string) error
 
 	// Attach a persistent disk on GCE with the given disk spec to the specified instance.
 	AttachDiskOnCloudProvider(
 		disk *GCEDisk,
 		readWrite string,
 		instanceZone string,
-		instanceName string) (gceObject, error)
+		instanceName string) error
 
 	// Detach a persistent disk on GCE with the given disk spec from the specified instance.
 	DetachDiskOnCloudProvider(
 		instanceZone string,
 		instanceName string,
-		devicePath string) (gceObject, error)
+		devicePath string) error
 
-	ResizeDiskOnCloudProvider(disk *GCEDisk, sizeGb int64, zone string) (gceObject, error)
-	RegionalResizeDiskOnCloudProvider(disk *GCEDisk, sizeGb int64) (gceObject, error)
+	ResizeDiskOnCloudProvider(disk *GCEDisk, sizeGb int64, zone string) error
+	RegionalResizeDiskOnCloudProvider(disk *GCEDisk, sizeGb int64) error
 
 	// Gets the persistent disk from GCE with the given diskName.
 	GetDiskFromCloudProvider(zone string, diskName string) (*GCEDisk, error)
 
 	// Gets the regional persistent disk from GCE with the given diskName.
 	GetRegionalDiskFromCloudProvider(diskName string) (*GCEDisk, error)
-
-	// Waits until GCE reports the given operation in the given zone as done.
-	WaitForZoneOp(op gceObject, zone string, mc *metricContext) error
-
-	// Waits until GCE reports the given operation in the given region is done.
-	WaitForRegionalOp(op gceObject, mc *metricContext) error
 }
 
 type gceServiceManager struct {
@@ -121,11 +116,11 @@ func (manager *gceServiceManager) CreateDiskOnCloudProvider(
 	sizeGb int64,
 	tagsStr string,
 	diskType string,
-	zone string) (gceObject, error) {
+	zone string) error {
 	diskTypeURI, err := manager.getDiskTypeURI(
 		manager.gce.region /* diskRegion */, singleZone{zone}, diskType, false /* useBetaAPI */)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	diskToCreateV1 := &compute.Disk{
@@ -134,8 +129,7 @@ func (manager *gceServiceManager) CreateDiskOnCloudProvider(
 		Description: tagsStr,
 		Type:        diskTypeURI,
 	}
-	return manager.gce.service.Disks.Insert(
-		manager.gce.projectID, zone, diskToCreateV1).Do()
+	return manager.gce.c.Disks().Insert(context.Background(), meta.ZonalKey(name, zone), diskToCreateV1)
 }
 
 func (manager *gceServiceManager) CreateRegionalDiskOnCloudProvider(
@@ -143,13 +137,13 @@ func (manager *gceServiceManager) CreateRegionalDiskOnCloudProvider(
 	sizeGb int64,
 	tagsStr string,
 	diskType string,
-	replicaZones sets.String) (gceObject, error) {
+	replicaZones sets.String) error {
 
 	if utilfeature.DefaultFeatureGate.Enabled(features.GCERegionalPersistentDisk) {
 		diskTypeURI, err := manager.getDiskTypeURI(
 			manager.gce.region /* diskRegion */, multiZone{replicaZones}, diskType, true /* useBetaAPI */)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		fullyQualifiedReplicaZones := []string{}
 		for _, replicaZone := range replicaZones.UnsortedList() {
@@ -164,21 +158,20 @@ func (manager *gceServiceManager) CreateRegionalDiskOnCloudProvider(
 			Type:         diskTypeURI,
 			ReplicaZones: fullyQualifiedReplicaZones,
 		}
-		return manager.gce.serviceBeta.RegionDisks.Insert(
-			manager.gce.projectID, manager.gce.region, diskToCreateBeta).Do()
+		return manager.gce.c.BetaRegionDisks().Insert(context.Background(), meta.RegionalKey(name, manager.gce.region), diskToCreateBeta)
 	}
 
-	return nil, fmt.Errorf("the regional PD feature is only available with the %s Kubernetes feature gate enabled", features.GCERegionalPersistentDisk)
+	return fmt.Errorf("the regional PD feature is only available with the %s Kubernetes feature gate enabled", features.GCERegionalPersistentDisk)
 }
 
 func (manager *gceServiceManager) AttachDiskOnCloudProvider(
 	disk *GCEDisk,
 	readWrite string,
 	instanceZone string,
-	instanceName string) (gceObject, error) {
+	instanceName string) error {
 	source, err := manager.getDiskSourceURI(disk)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	attachedDiskV1 := &compute.AttachedDisk{
@@ -188,16 +181,14 @@ func (manager *gceServiceManager) AttachDiskOnCloudProvider(
 		Source:     source,
 		Type:       diskTypePersistent,
 	}
-	return manager.gce.service.Instances.AttachDisk(
-		manager.gce.projectID, instanceZone, instanceName, attachedDiskV1).Do()
+	return manager.gce.c.Instances().AttachDisk(context.Background(), meta.ZonalKey(instanceName, instanceZone), attachedDiskV1)
 }
 
 func (manager *gceServiceManager) DetachDiskOnCloudProvider(
 	instanceZone string,
 	instanceName string,
-	devicePath string) (gceObject, error) {
-	return manager.gce.service.Instances.DetachDisk(
-		manager.gce.projectID, instanceZone, instanceName, devicePath).Do()
+	devicePath string) error {
+	return manager.gce.c.Instances().DetachDisk(context.Background(), meta.ZonalKey(instanceName, instanceZone), devicePath)
 }
 
 func (manager *gceServiceManager) GetDiskFromCloudProvider(
@@ -211,8 +202,7 @@ func (manager *gceServiceManager) GetDiskFromCloudProvider(
 		return nil, fmt.Errorf("Can not fetch disk. Zone is specified (%q). But disk name is empty.", zone)
 	}
 
-	diskStable, err := manager.gce.service.Disks.Get(
-		manager.gce.projectID, zone, diskName).Do()
+	diskStable, err := manager.gce.c.Disks().Get(context.Background(), meta.ZonalKey(diskName, zone))
 	if err != nil {
 		return nil, err
 	}
@@ -241,8 +231,7 @@ func (manager *gceServiceManager) GetRegionalDiskFromCloudProvider(
 	diskName string) (*GCEDisk, error) {
 
 	if utilfeature.DefaultFeatureGate.Enabled(features.GCERegionalPersistentDisk) {
-		diskBeta, err := manager.gce.serviceBeta.RegionDisks.Get(
-			manager.gce.projectID, manager.gce.region, diskName).Do()
+		diskBeta, err := manager.gce.c.BetaRegionDisks().Get(context.Background(), meta.RegionalKey(diskName, manager.gce.region))
 		if err != nil {
 			return nil, err
 		}
@@ -267,29 +256,17 @@ func (manager *gceServiceManager) GetRegionalDiskFromCloudProvider(
 
 func (manager *gceServiceManager) DeleteDiskOnCloudProvider(
 	zone string,
-	diskName string) (gceObject, error) {
-	return manager.gce.service.Disks.Delete(
-		manager.gce.projectID, zone, diskName).Do()
+	diskName string) error {
+	return manager.gce.c.Disks().Delete(context.Background(), meta.ZonalKey(diskName, zone))
 }
 
 func (manager *gceServiceManager) DeleteRegionalDiskOnCloudProvider(
-	diskName string) (gceObject, error) {
+	diskName string) error {
 	if utilfeature.DefaultFeatureGate.Enabled(features.GCERegionalPersistentDisk) {
-		return manager.gce.serviceBeta.RegionDisks.Delete(
-			manager.gce.projectID, manager.gce.region, diskName).Do()
+		return manager.gce.c.BetaRegionDisks().Delete(context.Background(), meta.RegionalKey(diskName, manager.gce.region))
 	}
 
-	return nil, fmt.Errorf("the regional PD feature is only available with the %s Kubernetes feature gate enabled", features.GCERegionalPersistentDisk)
-}
-
-func (manager *gceServiceManager) WaitForZoneOp(
-	op gceObject, zone string, mc *metricContext) error {
-	return manager.gce.waitForZoneOp(op, zone, mc)
-}
-
-func (manager *gceServiceManager) WaitForRegionalOp(
-	op gceObject, mc *metricContext) error {
-	return manager.gce.waitForRegionOp(op, manager.gce.region, mc)
+	return fmt.Errorf("the regional PD feature is only available with the %s Kubernetes feature gate enabled", features.GCERegionalPersistentDisk)
 }
 
 func (manager *gceServiceManager) getDiskSourceURI(disk *GCEDisk) (string, error) {
@@ -411,21 +388,21 @@ func (manager *gceServiceManager) getRegionFromZone(zoneInfo zoneType) (string, 
 	return region, nil
 }
 
-func (manager *gceServiceManager) ResizeDiskOnCloudProvider(disk *GCEDisk, sizeGb int64, zone string) (gceObject, error) {
+func (manager *gceServiceManager) ResizeDiskOnCloudProvider(disk *GCEDisk, sizeGb int64, zone string) error {
 	resizeServiceRequest := &compute.DisksResizeRequest{
 		SizeGb: sizeGb,
 	}
-	return manager.gce.service.Disks.Resize(manager.gce.projectID, zone, disk.Name, resizeServiceRequest).Do()
+	return manager.gce.c.Disks().Resize(context.Background(), meta.ZonalKey(disk.Name, zone), resizeServiceRequest)
 }
 
-func (manager *gceServiceManager) RegionalResizeDiskOnCloudProvider(disk *GCEDisk, sizeGb int64) (gceObject, error) {
+func (manager *gceServiceManager) RegionalResizeDiskOnCloudProvider(disk *GCEDisk, sizeGb int64) error {
 	if utilfeature.DefaultFeatureGate.Enabled(features.GCERegionalPersistentDisk) {
 		resizeServiceRequest := &computebeta.RegionDisksResizeRequest{
 			SizeGb: sizeGb,
 		}
-		return manager.gce.serviceBeta.RegionDisks.Resize(manager.gce.projectID, disk.Region, disk.Name, resizeServiceRequest).Do()
+		return manager.gce.c.BetaRegionDisks().Resize(context.Background(), meta.RegionalKey(disk.Name, disk.Region), resizeServiceRequest)
 	}
-	return nil, fmt.Errorf("the regional PD feature is only available with the %s Kubernetes feature gate enabled", features.GCERegionalPersistentDisk)
+	return fmt.Errorf("the regional PD feature is only available with the %s Kubernetes feature gate enabled", features.GCERegionalPersistentDisk)
 }
 
 // Disks is interface for manipulation with GCE PDs.
@@ -555,14 +532,7 @@ func (gce *GCECloud) AttachDisk(diskName string, nodeName types.NodeName, readOn
 		readWrite = "READ_ONLY"
 	}
 
-	attachOp, err := gce.manager.AttachDiskOnCloudProvider(
-		disk, readWrite, instance.Zone, instance.Name)
-
-	if err != nil {
-		return mc.Observe(err)
-	}
-
-	return gce.manager.WaitForZoneOp(attachOp, instance.Zone, mc)
+	return mc.Observe(gce.manager.AttachDiskOnCloudProvider(disk, readWrite, instance.Zone, instance.Name))
 }
 
 func (gce *GCECloud) DetachDisk(devicePath string, nodeName types.NodeName) error {
@@ -582,12 +552,7 @@ func (gce *GCECloud) DetachDisk(devicePath string, nodeName types.NodeName) erro
 	}
 
 	mc := newDiskMetricContextZonal("detach", gce.region, inst.Zone)
-	detachOp, err := gce.manager.DetachDiskOnCloudProvider(inst.Zone, inst.Name, devicePath)
-	if err != nil {
-		return mc.Observe(err)
-	}
-
-	return gce.manager.WaitForZoneOp(detachOp, inst.Zone, mc)
+	return mc.Observe(gce.manager.DetachDiskOnCloudProvider(inst.Zone, inst.Name, devicePath))
 }
 
 func (gce *GCECloud) DiskIsAttached(diskName string, nodeName types.NodeName) (bool, error) {
@@ -675,22 +640,15 @@ func (gce *GCECloud) CreateDisk(
 
 	mc := newDiskMetricContextZonal("create", gce.region, zone)
 
-	createOp, err := gce.manager.CreateDiskOnCloudProvider(
+	err = gce.manager.CreateDiskOnCloudProvider(
 		name, sizeGb, tagsStr, diskType, zone)
 
 	if isGCEError(err, "alreadyExists") {
 		glog.Warningf("GCE PD %q already exists, reusing", name)
 		return nil
-	} else if err != nil {
+	} else {
 		return mc.Observe(err)
 	}
-
-	err = gce.manager.WaitForZoneOp(createOp, zone, mc)
-	if isGCEError(err, "alreadyExists") {
-		glog.Warningf("GCE PD %q already exists, reusing", name)
-		return nil
-	}
-	return err
 }
 
 // CreateRegionalDisk creates a new Regional Persistent Disk, with the specified
@@ -723,22 +681,15 @@ func (gce *GCECloud) CreateRegionalDisk(
 
 	mc := newDiskMetricContextRegional("create", gce.region)
 
-	createOp, err := gce.manager.CreateRegionalDiskOnCloudProvider(
+	err = gce.manager.CreateRegionalDiskOnCloudProvider(
 		name, sizeGb, tagsStr, diskType, replicaZones)
 
 	if isGCEError(err, "alreadyExists") {
 		glog.Warningf("GCE PD %q already exists, reusing", name)
 		return nil
-	} else if err != nil {
+	} else {
 		return mc.Observe(err)
 	}
-
-	err = gce.manager.WaitForRegionalOp(createOp, mc)
-	if isGCEError(err, "alreadyExists") {
-		glog.Warningf("GCE PD %q already exists, reusing", name)
-		return nil
-	}
-	return err
 }
 
 func getDiskType(diskType string) (string, error) {
@@ -786,29 +737,23 @@ func (gce *GCECloud) ResizeDisk(diskToResize string, oldSize resource.Quantity, 
 	switch zoneInfo := disk.ZoneInfo.(type) {
 	case singleZone:
 		mc = newDiskMetricContextZonal("resize", disk.Region, zoneInfo.zone)
-		resizeOp, err := gce.manager.ResizeDiskOnCloudProvider(disk, requestGB, zoneInfo.zone)
+		err := gce.manager.ResizeDiskOnCloudProvider(disk, requestGB, zoneInfo.zone)
 
 		if err != nil {
 			return oldSize, mc.Observe(err)
+		} else {
+			return newSizeQuant, mc.Observe(err)
 		}
-		waitErr := gce.manager.WaitForZoneOp(resizeOp, zoneInfo.zone, mc)
-		if waitErr != nil {
-			return oldSize, waitErr
-		}
-		return newSizeQuant, nil
 	case multiZone:
 		if utilfeature.DefaultFeatureGate.Enabled(features.GCERegionalPersistentDisk) {
 			mc = newDiskMetricContextRegional("resize", disk.Region)
-			resizeOp, err := gce.manager.RegionalResizeDiskOnCloudProvider(disk, requestGB)
+			err := gce.manager.RegionalResizeDiskOnCloudProvider(disk, requestGB)
 
 			if err != nil {
 				return oldSize, mc.Observe(err)
+			} else {
+				return newSizeQuant, mc.Observe(err)
 			}
-			waitErr := gce.manager.WaitForRegionalOp(resizeOp, mc)
-			if waitErr != nil {
-				return oldSize, waitErr
-			}
-			return newSizeQuant, nil
 		}
 		return oldSize, fmt.Errorf("disk.ZoneInfo has unexpected type %T", zoneInfo)
 	case nil:
@@ -1026,19 +971,11 @@ func (gce *GCECloud) doDeleteDisk(diskToDelete string) error {
 	switch zoneInfo := disk.ZoneInfo.(type) {
 	case singleZone:
 		mc = newDiskMetricContextZonal("delete", disk.Region, zoneInfo.zone)
-		deleteOp, err := gce.manager.DeleteDiskOnCloudProvider(zoneInfo.zone, disk.Name)
-		if err != nil {
-			return mc.Observe(err)
-		}
-		return gce.manager.WaitForZoneOp(deleteOp, zoneInfo.zone, mc)
+		return mc.Observe(gce.manager.DeleteDiskOnCloudProvider(zoneInfo.zone, disk.Name))
 	case multiZone:
 		if utilfeature.DefaultFeatureGate.Enabled(features.GCERegionalPersistentDisk) {
 			mc = newDiskMetricContextRegional("delete", disk.Region)
-			deleteOp, err := gce.manager.DeleteRegionalDiskOnCloudProvider(disk.Name)
-			if err != nil {
-				return mc.Observe(err)
-			}
-			return gce.manager.WaitForRegionalOp(deleteOp, mc)
+			mc.Observe(gce.manager.DeleteRegionalDiskOnCloudProvider(disk.Name))
 		}
 		return fmt.Errorf("disk.ZoneInfo has unexpected type %T", zoneInfo)
 	case nil:
