@@ -31,6 +31,8 @@ import (
 	kstrings "k8s.io/kubernetes/pkg/util/strings"
 	"k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/pkg/volume/util"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/kubernetes/pkg/kubelet/apis"
 )
 
 // This is the primary entrypoint for volume plugins.
@@ -164,16 +166,28 @@ func (plugin *gcePersistentDiskPlugin) NewDeleter(spec *volume.Spec) (volume.Del
 }
 
 func (plugin *gcePersistentDiskPlugin) newDeleterInternal(spec *volume.Spec, manager pdManager) (volume.Deleter, error) {
-	if spec.PersistentVolume != nil && spec.PersistentVolume.Spec.GCEPersistentDisk == nil {
-		return nil, fmt.Errorf("spec.PersistentVolumeSource.GCEPersistentDisk is nil")
+	zones := make(sets.String)
+	var err error
+	if spec.PersistentVolume != nil {
+		if spec.PersistentVolume.Spec.GCEPersistentDisk == nil {
+			return nil, fmt.Errorf("spec.PersistentVolumeSource.GCEPersistentDisk is nil")
+		}
+
+		zones, err = util.LabelZonesToSet(spec.PersistentVolume.Labels[apis.LabelZoneFailureDomain])
+		if err != nil {
+			return nil, err
+		}
 	}
+
 	return &gcePersistentDiskDeleter{
 		gcePersistentDisk: &gcePersistentDisk{
 			volName: spec.Name(),
 			pdName:  spec.PersistentVolume.Spec.GCEPersistentDisk.PDName,
 			manager: manager,
 			plugin:  plugin,
-		}}, nil
+		},
+		zones: zones,
+	}, nil
 }
 
 func (plugin *gcePersistentDiskPlugin) NewProvisioner(options volume.VolumeOptions) (volume.Provisioner, error) {
@@ -377,6 +391,7 @@ func (c *gcePersistentDiskUnmounter) TearDownAt(dir string) error {
 
 type gcePersistentDiskDeleter struct {
 	*gcePersistentDisk
+	zones  sets.String
 }
 
 var _ volume.Deleter = &gcePersistentDiskDeleter{}

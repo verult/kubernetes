@@ -431,8 +431,11 @@ type Disks interface {
 	// serialized as JSON into Description field.
 	CreateRegionalDisk(name string, diskType string, replicaZones sets.String, sizeGb int64, tags map[string]string) error
 
-	// DeleteDisk deletes PD.
-	DeleteDisk(diskToDelete string) error
+	// DeleteDisk deletes PD. Zone can be empty, in which case the operation searches through all available zones.
+	DeleteDisk(name string, zone string) error
+
+	// TODO (verult) comment
+	DeleteRegionalDisk(name string) error
 
 	// ResizeDisk resizes PD and returns new disk size
 	ResizeDisk(diskToResize string, oldSize resource.Quantity, newSize resource.Quantity) (resource.Quantity, error)
@@ -451,7 +454,7 @@ var _ Disks = (*GCECloud)(nil)
 var _ cloudprovider.PVLabeler = (*GCECloud)(nil)
 
 type GCEDisk struct {
-	ZoneInfo zoneType
+	ZoneInfo zoneType // TODO (verult) is this still necessary?
 	Region   string
 	Name     string
 	Kind     string
@@ -703,8 +706,26 @@ func getDiskType(diskType string) (string, error) {
 	}
 }
 
-func (gce *GCECloud) DeleteDisk(diskToDelete string) error {
-	err := gce.doDeleteDisk(diskToDelete)
+// TODO (verult) simplify
+func (gce *GCECloud) DeleteDisk(name string, zone string) error {
+	var err error
+	if zone == "" {
+		err = gce.doDeleteDisk(name) // TODO (verult) refactor, change function name
+	} else {
+		disk, err := gce.getDiskByName(name, zone)
+		if err != nil {
+			return err
+		}
+
+		mc := newDiskMetricContextZonal("delete", disk.Region, zone)
+		deleteOp, err := gce.manager.DeleteDiskOnCloudProvider(zone, disk.Name)
+		if err != nil {
+			return mc.Observe(err)
+		}
+
+		err = gce.manager.WaitForZoneOp(deleteOp, zone, mc)
+	}
+
 	if isGCEError(err, "resourceInUseByAnotherResource") {
 		return volume.NewDeletedVolumeInUseError(err.Error())
 	}
@@ -712,6 +733,29 @@ func (gce *GCECloud) DeleteDisk(diskToDelete string) error {
 	if err == cloudprovider.DiskNotFound {
 		return nil
 	}
+	return err
+}
+
+func (gce *GCECloud) DeleteRegionalDisk(name string) error {
+	disk, err := gce.getRegionalDiskByName(name)
+	if err != nil {
+		if err == cloudprovider.DiskNotFound {
+			return nil
+		}
+		return err
+	}
+
+	mc := newDiskMetricContextRegional("delete", disk.Region)
+	deleteOp, err := gce.manager.DeleteRegionalDiskOnCloudProvider(disk.Name)
+	if err != nil {
+		return mc.Observe(err)
+	}
+	err = gce.manager.WaitForRegionalOp(deleteOp, mc)
+
+	if isGCEError(err, "resourceInUseByAnotherResource") {
+		return volume.NewDeletedVolumeInUseError(err.Error())
+	}
+
 	return err
 }
 
@@ -893,13 +937,7 @@ func (gce *GCECloud) getRegionalDiskByName(diskName string) (*GCEDisk, error) {
 // Prefer getDiskByName, if the zone can be established
 // Return cloudprovider.DiskNotFound if the given disk cannot be found in any zone
 func (gce *GCECloud) GetDiskByNameUnknownZone(diskName string) (*GCEDisk, error) {
-	if utilfeature.DefaultFeatureGate.Enabled(features.GCERegionalPersistentDisk) {
-		regionalDisk, err := gce.getRegionalDiskByName(diskName)
-		if err == nil {
-			return regionalDisk, err
-		}
-	}
-
+	// TODO (verult) update this comment
 	// Note: this is the gotcha right now with GCE PD support:
 	// disk names are not unique per-region.
 	// (I can create two volumes with name "myvol" in e.g. us-central1-b & us-central1-f)
@@ -922,20 +960,13 @@ func (gce *GCECloud) GetDiskByNameUnknownZone(diskName string) (*GCEDisk, error)
 			continue
 		}
 		if found != nil {
-			switch zoneInfo := disk.ZoneInfo.(type) {
-			case multiZone:
-				if zoneInfo.replicaZones.Has(zone) {
-					glog.Warningf("GCE PD name (%q) was found in multiple zones (%q), but ok because it is a RegionalDisk.",
-						diskName, zoneInfo.replicaZones)
-					continue
-				}
-				return nil, fmt.Errorf("GCE PD name was found in multiple zones: %q", diskName)
-			default:
-				return nil, fmt.Errorf("GCE PD name was found in multiple zones: %q", diskName)
-			}
+			// TODO (verult) Remove zoneinfo?
+			// findDiskByName always returns a disk with zoneInfo 'singleZone'
+			return nil, fmt.Errorf("GCE PD name was found in multiple zones: %q", diskName)
 		}
 		found = disk
 	}
+
 	if found != nil {
 		return found, nil
 	}
@@ -966,19 +997,15 @@ func (gce *GCECloud) doDeleteDisk(diskToDelete string) error {
 		return err
 	}
 
-	var mc *metricContext
+	// TODO (verult) Remove zoneinfo?
+	// GetDiskByNameUnknownZone always returns a disk with zoneInfo 'singleZone'
 
 	switch zoneInfo := disk.ZoneInfo.(type) {
 	case singleZone:
-		mc = newDiskMetricContextZonal("delete", disk.Region, zoneInfo.zone)
+		mc := newDiskMetricContextZonal("delete", disk.Region, zoneInfo.zone)
 		return mc.Observe(gce.manager.DeleteDiskOnCloudProvider(zoneInfo.zone, disk.Name))
-	case multiZone:
-		if utilfeature.DefaultFeatureGate.Enabled(features.GCERegionalPersistentDisk) {
-			mc = newDiskMetricContextRegional("delete", disk.Region)
-			mc.Observe(gce.manager.DeleteRegionalDiskOnCloudProvider(disk.Name))
-		}
-		return fmt.Errorf("disk.ZoneInfo has unexpected type %T", zoneInfo)
 	case nil:
+		// TODO (verult) is this possible?
 		return fmt.Errorf("PD has nil ZoneInfo: %v", disk)
 	default:
 		return fmt.Errorf("disk.ZoneInfo has unexpected type %T", zoneInfo)

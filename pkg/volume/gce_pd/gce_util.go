@@ -66,7 +66,18 @@ func (util *GCEDiskUtil) DeleteVolume(d *gcePersistentDiskDeleter) error {
 		return err
 	}
 
-	if err = cloud.DeleteDisk(d.pdName); err != nil {
+	if d.zones.Len() > 1 {
+		// Regional PD
+		err = cloud.DeleteRegionalDisk(d.pdName)
+	} else {
+		zone, ok := d.zones.PopAny()
+		if !ok {
+			zone = ""
+		}
+		err = cloud.DeleteDisk(d.pdName, zone)
+	}
+
+	if err != nil {
 		glog.V(2).Infof("Error deleting GCE PD volume %s: %v", d.pdName, err)
 		// GCE cloud provider returns volume.deletedVolumeInUseError when
 		// necessary, no handling needed here.
