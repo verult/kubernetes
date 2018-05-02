@@ -183,6 +183,7 @@ func (attacher *gcePersistentDiskAttacher) GetDeviceMountPath(
 	return makeGlobalPDName(attacher.host, volumeSource.PDName), nil
 }
 
+// TODO (verult)
 func (attacher *gcePersistentDiskAttacher) MountDevice(spec *volume.Spec, devicePath string, deviceMountPath string) error {
 	// Only mount the PD globally once.
 	mounter := attacher.host.GetMounter(gcePersistentDiskPluginName)
@@ -247,7 +248,8 @@ func (plugin *gcePersistentDiskPlugin) NewDetacher() (volume.Detacher, error) {
 // Callers are responsible for thread safety between concurrent attach and detach
 // operations.
 func (detacher *gcePersistentDiskDetacher) Detach(volumeName string, nodeName types.NodeName) error {
-	pdName := path.Base(volumeName)
+	deviceName := path.Base(volumeName)
+	pdName := getPDNameFromDeviceName(deviceName) // TODO (verult) shouldn't need this after DiskIsAttached refactor
 
 	attached, err := detacher.gceDisks.DiskIsAttached(pdName, nodeName)
 	if err != nil {
@@ -263,7 +265,7 @@ func (detacher *gcePersistentDiskDetacher) Detach(volumeName string, nodeName ty
 		return nil
 	}
 
-	if err = detacher.gceDisks.DetachDisk(pdName, nodeName); err != nil {
+	if err = detacher.gceDisks.DetachDisk(deviceName, nodeName); err != nil {
 		glog.Errorf("Error detaching PD %q from node %q: %v", pdName, nodeName, err)
 		return err
 	}
@@ -271,6 +273,7 @@ func (detacher *gcePersistentDiskDetacher) Detach(volumeName string, nodeName ty
 	return nil
 }
 
+// TODO (verult)
 func (detacher *gcePersistentDiskDetacher) UnmountDevice(deviceMountPath string) error {
 	return volumeutil.UnmountPath(deviceMountPath, detacher.host.GetMounter(gcePersistentDiskPluginName))
 }

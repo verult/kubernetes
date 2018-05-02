@@ -73,7 +73,21 @@ func (plugin *gcePersistentDiskPlugin) GetVolumeName(spec *volume.Spec) (string,
 		return "", err
 	}
 
-	return volumeSource.PDName, nil
+	// TODO (verult) create a separate function for fetching region and zone info from spec.
+	var volumeName string
+	if spec.PersistentVolume != nil {
+		region := spec.PersistentVolume.Labels[apis.LabelZoneRegion]
+		if isRegionalPD(spec) {
+			volumeName = volumeSource.PDName + volNameSeparator + region
+		} else {
+			zone := spec.PersistentVolume.Labels[apis.LabelZoneFailureDomain]
+			volumeName = volumeSource.PDName + volNameSeparator + region + volNameSeparator + zone
+		}
+	} else {
+		volumeName = volumeSource.PDName
+	}
+
+	return volumeName, nil
 }
 
 func (plugin *gcePersistentDiskPlugin) CanSupport(spec *volume.Spec) bool {

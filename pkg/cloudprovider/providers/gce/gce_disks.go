@@ -57,6 +57,8 @@ const (
 	diskSourceURITemplateRegional   = "%s/regions/%s/disks/%s" //{gce.projectID}/regions/{disk.Region}/disks/repd"
 
 	replicaZoneURITemplateSingleZone = "%s/zones/%s" // {gce.projectID}/zones/{disk.Zone}
+
+	deviceNameSeparator  = "_" // TODO (verult) can this be passed in another way? Why do both gce_disks and gce_util need this param?
 )
 
 type diskServiceManager interface {
@@ -174,8 +176,23 @@ func (manager *gceServiceManager) AttachDiskOnCloudProvider(
 		return err
 	}
 
+	// TODO (verult) can we do away with zoneInfo?
+	var deviceName string
+	switch zoneInfo := disk.ZoneInfo.(type) {
+	case singleZone:
+		deviceName = disk.Name + deviceNameSeparator + disk.Region + deviceNameSeparator + zoneInfo.zone
+	case multiZone:
+		deviceName = disk.Name + deviceNameSeparator + disk.Region
+	case nil:
+		// Unexpected, but sanity-check
+		return fmt.Errorf("PD did not have ZoneInfo: %v", disk)
+	default:
+		// Unexpected, but sanity-check
+		return fmt.Errorf("disk.ZoneInfo has unexpected type %T", zoneInfo)
+	}
+
 	attachedDiskV1 := &compute.AttachedDisk{
-		DeviceName: disk.Name,
+		DeviceName: deviceName,
 		Kind:       disk.Kind,
 		Mode:       readWrite,
 		Source:     source,
@@ -405,19 +422,23 @@ func (manager *gceServiceManager) RegionalResizeDiskOnCloudProvider(disk *GCEDis
 	return fmt.Errorf("the regional PD feature is only available with the %s Kubernetes feature gate enabled", features.GCERegionalPersistentDisk)
 }
 
+// TODO (verult) !!! Need a generic disk key type that works for regional PV, regular PV, and inline volumes.
 // Disks is interface for manipulation with GCE PDs.
 type Disks interface {
 	// AttachDisk attaches given disk to the node with the specified NodeName.
 	// Current instance is used when instanceID is empty string.
 	AttachDisk(diskName string, nodeName types.NodeName, readOnly bool, regional bool) error
 
+	// TODO (verult) Shouldn't pass devicePath as param - only cloud provider knows about device path.
 	// DetachDisk detaches given disk to the node with the specified NodeName.
 	// Current instance is used when nodeName is empty string.
 	DetachDisk(devicePath string, nodeName types.NodeName) error
 
+	// TODO (verult) identify by device name
 	// DiskIsAttached checks if a disk is attached to the node with the specified NodeName.
 	DiskIsAttached(diskName string, nodeName types.NodeName) (bool, error)
 
+	// TODO (verult) identify by device names
 	// DisksAreAttached is a batch function to check if a list of disks are attached
 	// to the node with the specified NodeName.
 	DisksAreAttached(diskNames []string, nodeName types.NodeName) (map[string]bool, error)
@@ -437,6 +458,7 @@ type Disks interface {
 	// TODO (verult) comment
 	DeleteRegionalDisk(name string) error
 
+	// TODO (verult) Need to identify based on zone as well.
 	// ResizeDisk resizes PD and returns new disk size
 	ResizeDisk(diskToResize string, oldSize resource.Quantity, newSize resource.Quantity) (resource.Quantity, error)
 
