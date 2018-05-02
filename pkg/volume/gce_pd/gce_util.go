@@ -50,6 +50,8 @@ const (
 	// Replication type constants must be lower case.
 	replicationTypeNone       = "none"
 	replicationTypeRegionalPD = "regional-pd"
+
+	volNameRegionalSuffix  = "_regional"
 )
 
 // These variables are modified only in unit tests and should be constant
@@ -398,4 +400,21 @@ func isRegionalPD(spec *volume.Spec) bool {
 		return len(zones) > 1
 	}
 	return false
+}
+
+func getDeviceName(spec *volume.Spec) (string, error) {
+	volumeSource, _, err := getVolumeSource(spec)
+	if err != nil {
+		return "", err
+	}
+
+	deviceName := volumeSource.PDName
+	if spec.PersistentVolume != nil && isRegionalPD(spec) {
+		deviceName += volNameRegionalSuffix
+	}
+	return deviceName, nil
+}
+
+func getPDNameFromDeviceName(volumeName string) string {
+	return strings.Split(volumeName, volNameSeparator)[0]
 }

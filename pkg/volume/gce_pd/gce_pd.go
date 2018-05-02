@@ -86,12 +86,7 @@ func (plugin *gcePersistentDiskPlugin) GetPluginName() string {
 }
 
 func (plugin *gcePersistentDiskPlugin) GetVolumeName(spec *volume.Spec) (string, error) {
-	volumeSource, _, err := getVolumeSource(spec)
-	if err != nil {
-		return "", err
-	}
-
-	return volumeSource.PDName, nil
+	return getDeviceName(spec)
 }
 
 func (plugin *gcePersistentDiskPlugin) CanSupport(spec *volume.Spec) bool {
