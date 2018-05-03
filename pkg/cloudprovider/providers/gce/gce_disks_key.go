@@ -37,8 +37,15 @@ type DiskKey struct {
 	ZoneSet sets.String
 }
 
+// TODO (verult) Create constructor that validates key before creation.
+// If ZoneSet.Len() > 0, Region != ""
+
 func (key *DiskKey) IsRegionalPD() bool {
 	return key.Region != "" && key.ZoneSet.Len() != 1
+}
+
+func (key *DiskKey) IsZoneInfoAvailable() bool {
+	return key.ZoneSet.Len() > 0
 }
 
 // "{<name>,<region>,<zone1__zone2>}"
