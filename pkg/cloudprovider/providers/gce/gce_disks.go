@@ -462,6 +462,7 @@ type Disks interface {
 	// ResizeDisk resizes PD and returns new disk size
 	ResizeDisk(diskToResize string, oldSize resource.Quantity, newSize resource.Quantity) (resource.Quantity, error)
 
+	// TODO (verult) Use key or nah?
 	// GetAutoLabelsForPD returns labels to apply to PersistentVolume
 	// representing this PD, namely failure domain and zone.
 	// zone can be provided to specify the zone for the PD,

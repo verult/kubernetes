@@ -68,63 +68,66 @@ func (plugin *gcePersistentDiskPlugin) GetDeviceMountRefs(deviceMountPath string
 // Callers are responsible for thread safety between concurrent attach and
 // detach operations.
 func (attacher *gcePersistentDiskAttacher) Attach(spec *volume.Spec, nodeName types.NodeName) (string, error) {
-	volumeSource, readOnly, err := getVolumeSource(spec)
+	key, err := specToKey(spec)
 	if err != nil {
 		return "", err
 	}
 
-	pdName := volumeSource.PDName
+	_, readOnly, err := getVolumeSource(spec)
+	if err != nil {
+		return "", err
+	}
 
-	attached, err := attacher.gceDisks.DiskIsAttached(pdName, nodeName)
+	attached, err := attacher.gceDisks.DiskIsAttached(key, nodeName)
 	if err != nil {
 		// Log error and continue with attach
 		glog.Errorf(
 			"Error checking if PD (%q) is already attached to current node (%q). Will continue and try attach anyway. err=%v",
-			pdName, nodeName, err)
+			key, nodeName, err)
 	}
 
 	if err == nil && attached {
 		// Volume is already attached to node.
-		glog.Infof("Attach operation is successful. PD %q is already attached to node %q.", pdName, nodeName)
+		glog.Infof("Attach operation is successful. PD %q is already attached to node %q.", key, nodeName)
 	} else {
-		if err := attacher.gceDisks.AttachDisk(pdName, nodeName, readOnly, isRegionalPD(spec)); err != nil {
-			glog.Errorf("Error attaching PD %q to node %q: %+v", pdName, nodeName, err)
+		if err := attacher.gceDisks.AttachDisk(key, nodeName, readOnly); err != nil {
+			glog.Errorf("Error attaching PD %q to node %q: %+v", key, nodeName, err)
 			return "", err
 		}
 	}
 
-	return path.Join(diskByIdPath, diskGooglePrefix+pdName), nil
+	return path.Join(diskByIdPath, diskGooglePrefix+keyToVolName(key)), nil
 }
 
 func (attacher *gcePersistentDiskAttacher) VolumesAreAttached(specs []*volume.Spec, nodeName types.NodeName) (map[*volume.Spec]bool, error) {
 	volumesAttachedCheck := make(map[*volume.Spec]bool)
-	volumePdNameMap := make(map[string]*volume.Spec)
-	pdNameList := []string{}
+	volumePdNameMap := make(map[gce.DiskKey]*volume.Spec)
+	diskKeyList := []gce.DiskKey{}
 	for _, spec := range specs {
-		volumeSource, _, err := getVolumeSource(spec)
+		key, err := specToKey(spec)
 		// If error is occurred, skip this volume and move to the next one
 		if err != nil {
 			glog.Errorf("Error getting volume (%q) source : %v", spec.Name(), err)
 			continue
 		}
-		pdNameList = append(pdNameList, volumeSource.PDName)
+		diskKeyList = append(diskKeyList, key)
 		volumesAttachedCheck[spec] = true
-		volumePdNameMap[volumeSource.PDName] = spec
+		volumePdNameMap[key] = spec
 	}
-	attachedResult, err := attacher.gceDisks.DisksAreAttached(pdNameList, nodeName)
+	attachedResult, err := attacher.gceDisks.DisksAreAttached(diskKeyList, nodeName)
 	if err != nil {
 		// Log error and continue with attach
 		glog.Errorf(
 			"Error checking if PDs (%v) are already attached to current node (%q). err=%v",
-			pdNameList, nodeName, err)
+			diskKeyList, nodeName, err)
 		return volumesAttachedCheck, err
 	}
 
-	for pdName, attached := range attachedResult {
+	for key, attached := range attachedResult {
 		if !attached {
-			spec := volumePdNameMap[pdName]
+			spec := volumePdNameMap[key]
 			volumesAttachedCheck[spec] = false
-			glog.V(2).Infof("VolumesAreAttached: check volume %q (specName: %q) is no longer attached", pdName, spec.Name())
+			glog.V(2).Infof("VolumesAreAttached: check volume %q (specName: %q) is no longer attached", key, spec.Name())
 		}
 	}
 	return volumesAttachedCheck, nil
@@ -136,12 +139,16 @@ func (attacher *gcePersistentDiskAttacher) WaitForAttach(spec *volume.Spec, devi
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
+	key, err := specToKey(spec)
+	if err != nil {
+		return "", err
+	}
+
 	volumeSource, _, err := getVolumeSource(spec)
 	if err != nil {
 		return "", err
 	}
 
-	pdName := volumeSource.PDName
 	partition := ""
 	if volumeSource.Partition != 0 {
 		partition = strconv.Itoa(int(volumeSource.Partition))
@@ -153,37 +160,36 @@ func (attacher *gcePersistentDiskAttacher) WaitForAttach(spec *volume.Spec, devi
 	}
 	sdBeforeSet := sets.NewString(sdBefore...)
 
-	devicePaths := getDiskByIdPaths(pdName, partition)
+	devicePaths := getDiskByIdPaths(key, partition)
 	for {
 		select {
 		case <-ticker.C:
-			glog.V(5).Infof("Checking GCE PD %q is attached.", pdName)
+			glog.V(5).Infof("Checking GCE PD %q is attached.", key)
 			path, err := verifyDevicePath(devicePaths, sdBeforeSet)
 			if err != nil {
 				// Log error, if any, and continue checking periodically. See issue #11321
-				glog.Errorf("Error verifying GCE PD (%q) is attached: %v", pdName, err)
+				glog.Errorf("Error verifying GCE PD (%q) is attached: %v", key, err)
 			} else if path != "" {
 				// A device path has successfully been created for the PD
-				glog.Infof("Successfully found attached GCE PD %q.", pdName)
+				glog.Infof("Successfully found attached GCE PD %q.", key)
 				return path, nil
 			}
 		case <-timer.C:
-			return "", fmt.Errorf("Could not find attached GCE PD %q. Timeout waiting for mount paths to be created.", pdName)
+			return "", fmt.Errorf("Could not find attached GCE PD %q. Timeout waiting for mount paths to be created.", key)
 		}
 	}
 }
 
 func (attacher *gcePersistentDiskAttacher) GetDeviceMountPath(
 	spec *volume.Spec) (string, error) {
-	volumeSource, _, err := getVolumeSource(spec)
+	key, err := specToKey(spec)
 	if err != nil {
 		return "", err
 	}
 
-	return makeGlobalPDName(attacher.host, volumeSource.PDName), nil
+	return makeGlobalPDName(attacher.host, keyToVolName(key)), nil
 }
 
-// TODO (verult)
 func (attacher *gcePersistentDiskAttacher) MountDevice(spec *volume.Spec, devicePath string, deviceMountPath string) error {
 	// Only mount the PD globally once.
 	mounter := attacher.host.GetMounter(gcePersistentDiskPluginName)
@@ -248,32 +254,31 @@ func (plugin *gcePersistentDiskPlugin) NewDetacher() (volume.Detacher, error) {
 // Callers are responsible for thread safety between concurrent attach and detach
 // operations.
 func (detacher *gcePersistentDiskDetacher) Detach(volumeName string, nodeName types.NodeName) error {
-	deviceName := path.Base(volumeName)
-	pdName := getPDNameFromDeviceName(deviceName) // TODO (verult) shouldn't need this after DiskIsAttached refactor
+	deviceName := path.Base(volumeName) // TODO (verult) why is it necessary to do path.Base()?
+	key := volNameToKey(deviceName)
 
-	attached, err := detacher.gceDisks.DiskIsAttached(pdName, nodeName)
+	attached, err := detacher.gceDisks.DiskIsAttached(key, nodeName)
 	if err != nil {
 		// Log error and continue with detach
 		glog.Errorf(
 			"Error checking if PD (%q) is already attached to current node (%q). Will continue and try detach anyway. err=%v",
-			pdName, nodeName, err)
+			key, nodeName, err)
 	}
 
 	if err == nil && !attached {
 		// Volume is not attached to node. Success!
-		glog.Infof("Detach operation is successful. PD %q was not attached to node %q.", pdName, nodeName)
+		glog.Infof("Detach operation is successful. PD %q was not attached to node %q.", key, nodeName)
 		return nil
 	}
 
-	if err = detacher.gceDisks.DetachDisk(deviceName, nodeName); err != nil {
-		glog.Errorf("Error detaching PD %q from node %q: %v", pdName, nodeName, err)
+	if err = detacher.gceDisks.DetachDisk(key, nodeName); err != nil {
+		glog.Errorf("Error detaching PD %q from node %q: %v", key, nodeName, err)
 		return err
 	}
 
 	return nil
 }
 
-// TODO (verult)
 func (detacher *gcePersistentDiskDetacher) UnmountDevice(deviceMountPath string) error {
 	return volumeutil.UnmountPath(deviceMountPath, detacher.host.GetMounter(gcePersistentDiskPluginName))
 }

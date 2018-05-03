@@ -16,10 +16,14 @@ limitations under the License.
 
 package gce
 
-import "k8s.io/apimachinery/pkg/util/sets"
+import (
+	"k8s.io/apimachinery/pkg/util/sets"
+	"strings"
+)
 
 // TODO (verult) this is really bad - this file contains knowledge between cloud provider and plugin.
 //     Need better abstraction.
+// TODO (verult) Should this be called a Key if it's many-to-one?
 
 /*
  * In-line volume: only Name is set.
@@ -35,4 +39,21 @@ type DiskKey struct {
 
 func (key *DiskKey) IsRegionalPD() bool {
 	return key.Region != "" && key.ZoneSet.Len() != 1
+}
+
+// "{<name>,<region>,<zone1__zone2>}"
+func (key *DiskKey) String() string {
+	str := "{" + key.Name
+
+	if key.Region != "" {
+		str += "," + key.Region
+
+		if key.ZoneSet.Len() > 0 {
+			str += "," + strings.Join(key.ZoneSet.List(), "__")
+		}
+	}
+
+	str += "}"
+
+	return str
 }

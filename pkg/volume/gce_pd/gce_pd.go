@@ -33,6 +33,7 @@ import (
 	"k8s.io/kubernetes/pkg/volume/util"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/kubernetes/pkg/kubelet/apis"
+	"k8s.io/kubernetes/pkg/cloudprovider/providers/gce"
 )
 
 // This is the primary entrypoint for volume plugins.
@@ -104,6 +105,7 @@ func (plugin *gcePersistentDiskPlugin) NewMounter(spec *volume.Spec, pod *v1.Pod
 	return plugin.newMounterInternal(spec, pod.UID, &GCEDiskUtil{}, plugin.host.GetMounter(plugin.GetPluginName()))
 }
 
+// TODO (verult) consider removing this
 func getVolumeSource(
 	spec *volume.Spec) (*v1.GCEPersistentDiskVolumeSource, bool, error) {
 	if spec.Volume != nil && spec.Volume.GCEPersistentDisk != nil {
@@ -124,7 +126,11 @@ func (plugin *gcePersistentDiskPlugin) newMounterInternal(spec *volume.Spec, pod
 		return nil, err
 	}
 
-	pdName := volumeSource.PDName
+	key, err := specToKey(spec)
+	if err != nil {
+		return nil, err
+	}
+
 	partition := ""
 	if volumeSource.Partition != 0 {
 		partition = strconv.Itoa(int(volumeSource.Partition))
@@ -134,7 +140,7 @@ func (plugin *gcePersistentDiskPlugin) newMounterInternal(spec *volume.Spec, pod
 		gcePersistentDisk: &gcePersistentDisk{
 			podUID:          podUID,
 			volName:         spec.Name(),
-			pdName:          pdName,
+			diskKey:         key,
 			partition:       partition,
 			mounter:         mounter,
 			manager:         manager,
@@ -165,27 +171,18 @@ func (plugin *gcePersistentDiskPlugin) NewDeleter(spec *volume.Spec) (volume.Del
 }
 
 func (plugin *gcePersistentDiskPlugin) newDeleterInternal(spec *volume.Spec, manager pdManager) (volume.Deleter, error) {
-	zones := make(sets.String)
-	var err error
-	if spec.PersistentVolume != nil {
-		if spec.PersistentVolume.Spec.GCEPersistentDisk == nil {
-			return nil, fmt.Errorf("spec.PersistentVolumeSource.GCEPersistentDisk is nil")
-		}
-
-		zones, err = util.LabelZonesToSet(spec.PersistentVolume.Labels[apis.LabelZoneFailureDomain])
-		if err != nil {
-			return nil, err
-		}
+	key, err := specToKey(spec)
+	if err != nil {
+		return nil, err
 	}
 
 	return &gcePersistentDiskDeleter{
 		gcePersistentDisk: &gcePersistentDisk{
 			volName: spec.Name(),
-			pdName:  spec.PersistentVolume.Spec.GCEPersistentDisk.PDName,
+			diskKey: key,
 			manager: manager,
 			plugin:  plugin,
 		},
-		zones: zones,
 	}, nil
 }
 
@@ -216,8 +213,12 @@ func (plugin *gcePersistentDiskPlugin) ExpandVolumeDevice(
 	if err != nil {
 		return oldSize, err
 	}
-	pdName := spec.PersistentVolume.Spec.GCEPersistentDisk.PDName
-	updatedQuantity, err := cloud.ResizeDisk(pdName, oldSize, newSize)
+	key, err := specToKey(spec)
+	if err != nil {
+		return oldSize, err
+	}
+
+	updatedQuantity, err := cloud.ResizeDisk(key, oldSize, newSize)
 
 	if err != nil {
 		return oldSize, err
@@ -236,7 +237,7 @@ func (plugin *gcePersistentDiskPlugin) ConstructVolumeSpec(volumeName, mountPath
 		Name: volumeName,
 		VolumeSource: v1.VolumeSource{
 			GCEPersistentDisk: &v1.GCEPersistentDiskVolumeSource{
-				PDName: sourceName,
+				PDName: volNameToKey(sourceName).Name, // TODO (verult) verify with Jing
 			},
 		},
 	}
@@ -257,7 +258,7 @@ type gcePersistentDisk struct {
 	volName string
 	podUID  types.UID
 	// Unique identifier of the PD, used to find the disk resource in the provider.
-	pdName string
+	diskKey gce.DiskKey
 	// Specifies the partition to mount
 	partition string
 	// Utility interface to provision and delete disks
@@ -300,7 +301,7 @@ func (b *gcePersistentDiskMounter) SetUp(fsGroup *int64) error {
 func (b *gcePersistentDiskMounter) SetUpAt(dir string, fsGroup *int64) error {
 	// TODO: handle failed mounts here.
 	notMnt, err := b.mounter.IsLikelyNotMountPoint(dir)
-	glog.V(4).Infof("GCE PersistentDisk set up: Dir (%s) PD name (%q) Mounted (%t) Error (%v), ReadOnly (%t)", dir, b.pdName, !notMnt, err, b.readOnly)
+	glog.V(4).Infof("GCE PersistentDisk set up: Dir (%s) PD name (%q) Mounted (%t) Error (%v), ReadOnly (%t)", dir, b.diskKey, !notMnt, err, b.readOnly)
 	if err != nil && !os.IsNotExist(err) {
 		glog.Errorf("cannot validate mount point: %s %v", dir, err)
 		return err
@@ -320,7 +321,7 @@ func (b *gcePersistentDiskMounter) SetUpAt(dir string, fsGroup *int64) error {
 		options = append(options, "ro")
 	}
 
-	globalPDPath := makeGlobalPDName(b.plugin.host, b.pdName)
+	globalPDPath := makeGlobalPDName(b.plugin.host, keyToVolName(b.diskKey))
 	glog.V(4).Infof("attempting to mount %s", dir)
 
 	err = b.mounter.Mount(globalPDPath, dir, "", options)
@@ -359,6 +360,7 @@ func (b *gcePersistentDiskMounter) SetUpAt(dir string, fsGroup *int64) error {
 	return nil
 }
 
+// TODO (verult) Need to change function name
 func makeGlobalPDName(host volume.VolumeHost, devName string) string {
 	return path.Join(host.GetPluginDir(gcePersistentDiskPluginName), mount.MountsInGlobalPDPath, devName)
 }
@@ -390,7 +392,6 @@ func (c *gcePersistentDiskUnmounter) TearDownAt(dir string) error {
 
 type gcePersistentDiskDeleter struct {
 	*gcePersistentDisk
-	zones  sets.String
 }
 
 var _ volume.Deleter = &gcePersistentDiskDeleter{}

@@ -68,24 +68,15 @@ func (util *GCEDiskUtil) DeleteVolume(d *gcePersistentDiskDeleter) error {
 		return err
 	}
 
-	if d.zones.Len() > 1 {
-		// Regional PD
-		err = cloud.DeleteRegionalDisk(d.pdName)
-	} else {
-		zone, ok := d.zones.PopAny()
-		if !ok {
-			zone = ""
-		}
-		err = cloud.DeleteDisk(d.pdName, zone)
-	}
+	err = cloud.DeleteDisk(d.diskKey)
 
 	if err != nil {
-		glog.V(2).Infof("Error deleting GCE PD volume %s: %v", d.pdName, err)
+		glog.V(2).Infof("Error deleting GCE PD volume %v: %v", d.diskKey, err)
 		// GCE cloud provider returns volume.deletedVolumeInUseError when
 		// necessary, no handling needed here.
 		return err
 	}
-	glog.V(2).Infof("Successfully deleted GCE PD volume %s", d.pdName)
+	glog.V(2).Infof("Successfully deleted GCE PD volume %v", d.diskKey)
 	return nil
 }
 
@@ -310,10 +301,11 @@ func verifyAllPathsRemoved(devicePaths []string) (bool, error) {
 }
 
 // Returns list of all /dev/disk/by-id/* paths for given PD.
-func getDiskByIdPaths(pdName string, partition string) []string {
+func getDiskByIdPaths(key gcecloud.DiskKey, partition string) []string {
+	deviceName := keyToVolName(key)
 	devicePaths := []string{
-		path.Join(diskByIdPath, diskGooglePrefix+pdName),
-		path.Join(diskByIdPath, diskScsiGooglePrefix+pdName),
+		path.Join(diskByIdPath, diskGooglePrefix+deviceName),
+		path.Join(diskByIdPath, diskScsiGooglePrefix+deviceName),
 	}
 
 	if partition != "" {
@@ -392,20 +384,6 @@ func udevadmChangeToDrive(drivePath string) error {
 	return nil
 }
 
-// Checks whether the given GCE PD volume spec is associated with a regional PD.
-func isRegionalPD(spec *volume.Spec) bool {
-	if spec.PersistentVolume != nil {
-		zonesLabel := spec.PersistentVolume.Labels[kubeletapis.LabelZoneFailureDomain]
-		zones := strings.Split(zonesLabel, kubeletapis.LabelMultiZoneDelimiter)
-		return len(zones) > 1
-	}
-	return false
-}
-
-func getPDNameFromDeviceName(volumeName string) string {
-	return strings.Split(volumeName, volNameSeparator)[0]
-}
-
 func specToKey(spec *volume.Spec) (gcecloud.DiskKey, error) {
 	if spec.Volume != nil && spec.Volume.GCEPersistentDisk != nil {
 		// In-line volume
@@ -446,7 +424,9 @@ func volNameToKey(volName string) gcecloud.DiskKey {
 	return key
 }
 
-// Note: this function erases zone information for regional PDs.
+// Note: this function erases zone information for regional PDs,
+// i.e. volNameToKey(keyToVolName(key)) != key
+// TODO (verult) how to make this more intuitive?
 func keyToVolName(key gcecloud.DiskKey) string {
 	volName := key.Name
 	// If key only contains Name, it represents an in-line volume, so we stop here.
