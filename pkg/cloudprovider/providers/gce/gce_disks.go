@@ -420,7 +420,7 @@ func (manager *gceServiceManager) RegionalResizeDiskOnCloudProvider(disk *GCEDis
 	return fmt.Errorf("the regional PD feature is only available with the %s Kubernetes feature gate enabled", features.GCERegionalPersistentDisk)
 }
 
-// TODO (verult) !!! Need a generic disk key type that works for regional PV, regular PV, and inline volumes.
+// TODO (verult) Verify there's a nil check for all "key" parameters
 // Disks is interface for manipulation with GCE PDs.
 type Disks interface {
 	// AttachDisk attaches given disk to the node with the specified NodeName.
@@ -530,15 +530,16 @@ func (gce *GCECloud) AttachDisk(key DiskInfo, nodeName types.NodeName, readOnly 
 
 	var disk *GCEDisk
 	var mc *metricContext
-	if key.IsRegionalPD() && utilfeature.DefaultFeatureGate.Enabled(features.GCERegionalPersistentDisk) {
-		disk, err = gce.getRegionalDiskByName(key.Name)
+	name := key.GetDiskName()
+	if _, regional := key.(RegionalDiskInfo); regional && utilfeature.DefaultFeatureGate.Enabled(features.GCERegionalPersistentDisk) {
+		disk, err = gce.getRegionalDiskByName(name)
 		if err != nil {
 			return err
 		} else {
 			mc = newDiskMetricContextRegional("attach", gce.region)
 		}
 	} else {
-		disk, err = gce.getDiskByName(key.Name, instance.Zone)
+		disk, err = gce.getDiskByName(name, instance.Zone)
 		if err != nil {
 			return err
 		}
@@ -551,6 +552,7 @@ func (gce *GCECloud) AttachDisk(key DiskInfo, nodeName types.NodeName, readOnly 
 	}
 
 	// TODO (verult) Pull device name calculation logic out here from AttachDiskOnCloudProvider().
+	// so we don't to fetch disk.
 	return mc.Observe(gce.manager.AttachDiskOnCloudProvider(disk, readWrite, instance.Zone, instance.Name))
 }
 
@@ -571,7 +573,7 @@ func (gce *GCECloud) DetachDisk(key DiskInfo, nodeName types.NodeName) error {
 	}
 
 	mc := newDiskMetricContextZonal("detach", gce.region, inst.Zone)
-	return mc.Observe(gce.manager.DetachDiskOnCloudProvider(inst.Zone, inst.Name, keyToDeviceName(key)))
+	return mc.Observe(gce.manager.DetachDiskOnCloudProvider(inst.Zone, inst.Name, key.GetDeviceName()))
 }
 
 // TODO (verult) Must check two device names for zonal PDs: <diskname> and <diskname>_<region>_<zone>
@@ -600,6 +602,29 @@ func (gce *GCECloud) DiskIsAttached(key DiskInfo, nodeName types.NodeName) (bool
 	}
 
 	return false, nil
+}
+
+// For regional disks, the only valid device name is <diskname>_<region>
+// For zonal disks, it could be either <diskname> or <diskname>_<region>_<zone>
+func verifyDeviceName(devNameList []string, key DiskInfo, region, zone string) bool {
+	validDevNames := []string{ key.GetDeviceName() }
+	switch d := key.(type) {
+	case PartialDiskInfo:
+		tmpKey := ZonalDiskInfo{
+			Name: d.Name,
+			Region: region,
+			Zone: zone,
+		}
+		validDevNames = append(validDevNames, tmpKey.GetDeviceName())
+	case ZonalDiskInfo:
+		tmpKey := PartialDiskInfo{
+			Name: d.Name,
+		}
+		validDevNames = append(validDevNames, tmpKey.GetDeviceName())
+	}
+
+	// TODO (verult)
+	for
 }
 
 // TODO (verult) Must check two device names for zonal PDs: <diskname> and <diskname>_<region>_<zone>
@@ -1025,21 +1050,4 @@ func isGCEError(err error, reason string) bool {
 		}
 	}
 	return false
-}
-
-func keyToDeviceName(key DiskInfo) string {
-	devName := key.Name
-	// If key only contains Name, it represents an in-line volume, so we stop here.
-
-	if key.Region != "" {
-		devName += deviceNameSeparator + key.Region
-
-		// Only append zone if the key represents a regular PD.
-		if key.ZoneSet.Len() == 1 {
-			zone,_ := key.ZoneSet.PopAny()
-			devName += deviceNameSeparator + zone
-		}
-	}
-
-	return devName
 }

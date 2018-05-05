@@ -22,6 +22,7 @@ const deviceNameSeparator = "_"
 
 // TODO (verult) We need a better name than DiskInfo
 type DiskInfo interface{
+	// TODO (verult) These names look too similar - very error prone
 	GetDiskName() string
 	GetDeviceName() string
 }
