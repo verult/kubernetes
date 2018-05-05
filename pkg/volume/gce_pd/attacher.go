@@ -90,19 +90,20 @@ func (attacher *gcePersistentDiskAttacher) Attach(spec *volume.Spec, nodeName ty
 		// Volume is already attached to node.
 		glog.Infof("Attach operation is successful. PD %q is already attached to node %q.", key, nodeName)
 	} else {
+
 		if err := attacher.gceDisks.AttachDisk(key, nodeName, readOnly); err != nil {
 			glog.Errorf("Error attaching PD %q to node %q: %+v", key, nodeName, err)
 			return "", err
 		}
 	}
 
-	return path.Join(diskByIdPath, diskGooglePrefix+keyToVolName(key)), nil
+	return path.Join(diskByIdPath, diskGooglePrefix+key.GetDeviceName()), nil
 }
 
 func (attacher *gcePersistentDiskAttacher) VolumesAreAttached(specs []*volume.Spec, nodeName types.NodeName) (map[*volume.Spec]bool, error) {
 	volumesAttachedCheck := make(map[*volume.Spec]bool)
-	volumePdNameMap := make(map[gce.DiskKey]*volume.Spec)
-	diskKeyList := []gce.DiskKey{}
+	volumePdNameMap := make(map[gce.DiskInfo]*volume.Spec)
+	diskKeyList := []gce.DiskInfo{}
 	for _, spec := range specs {
 		key, err := specToKey(spec)
 		// If error is occurred, skip this volume and move to the next one
@@ -255,7 +256,7 @@ func (plugin *gcePersistentDiskPlugin) NewDetacher() (volume.Detacher, error) {
 // operations.
 func (detacher *gcePersistentDiskDetacher) Detach(volumeName string, nodeName types.NodeName) error {
 	deviceName := path.Base(volumeName) // TODO (verult) why is it necessary to do path.Base()?
-	key := volNameToKey(deviceName)
+	key := gce.DeviceNameToKey(deviceName)
 
 	attached, err := detacher.gceDisks.DiskIsAttached(key, nodeName)
 	if err != nil {

@@ -302,8 +302,8 @@ func verifyAllPathsRemoved(devicePaths []string) (bool, error) {
 }
 
 // Returns list of all /dev/disk/by-id/* paths for given PD.
-func getDiskByIdPaths(key gcecloud.DiskKey, partition string) []string {
-	deviceName := keyToVolName(key)
+func getDiskByIdPaths(key gcecloud.DiskInfo, partition string) []string {
+	deviceName := keyToVolName(key) // TODO (verult) change, this is wrong
 	devicePaths := []string{
 		path.Join(diskByIdPath, diskGooglePrefix+deviceName),
 		path.Join(diskByIdPath, diskScsiGooglePrefix+deviceName),
@@ -385,62 +385,48 @@ func udevadmChangeToDrive(drivePath string) error {
 	return nil
 }
 
-func specToKey(spec *volume.Spec) (gcecloud.DiskKey, error) {
+func specToKey(spec *volume.Spec) (gcecloud.DiskInfo, error) {
 	if spec.Volume != nil && spec.Volume.GCEPersistentDisk != nil {
-		// In-line volume
-		return gcecloud.DiskKey{
+
+		return gcecloud.PartialDiskInfo{
 			Name: spec.Volume.GCEPersistentDisk.PDName,
 		}, nil
 
 	} else if spec.PersistentVolume != nil && spec.PersistentVolume.Spec.GCEPersistentDisk != nil {
-		// PV
+		name := spec.PersistentVolume.Spec.GCEPersistentDisk.PDName
+
+		region := spec.PersistentVolume.Labels[kubeletapis.LabelZoneRegion]
+		if region == "" {
+			return gcecloud.PartialDiskInfo{
+				Name: name,
+			}, nil
+		}
+
 		zones, err := volumeutil.LabelZonesToSet(spec.PersistentVolume.Labels[kubeletapis.LabelZoneFailureDomain])
 		if err != nil {
-			return gcecloud.DiskKey{}, err
+			return nil, err
 		}
-		return gcecloud.DiskKey{
-			Name: spec.PersistentVolume.Spec.GCEPersistentDisk.PDName,
-			Region: spec.PersistentVolume.Labels[kubeletapis.LabelZoneRegion],
-			ZoneSet: zones,
-		}, nil
-	}
 
-	return gcecloud.DiskKey{}, fmt.Errorf("Spec does not reference a GCE volume type")
-}
-
-func volNameToKey(volName string) gcecloud.DiskKey {
-	// TODO (verult) Ideally a format string is used to construct volName.
-
-	key := gcecloud.DiskKey{}
-	parts := strings.Split(volName, volNameSeparator)
-
-	key.Name = parts[0]
-	if len(parts) >= 2 {
-		key.Region = parts[1]
-	}
-	if len(parts) >= 3 {
-		key.ZoneSet = sets.NewString(parts[2])
-	}
-
-	return key
-}
-
-// Note: this function erases zone information for regional PDs,
-// i.e. volNameToKey(keyToVolName(key)) != key
-// TODO (verult) how to make this more intuitive?
-func keyToVolName(key gcecloud.DiskKey) string {
-	volName := key.Name
-	// If key only contains Name, it represents an in-line volume, so we stop here.
-
-	if key.Region != "" {
-		volName += volNameSeparator + key.Region
-
-		// Only append zone if the key represents a regular PD.
-		if key.ZoneSet.Len() == 1 {
-			zone,_ := key.ZoneSet.PopAny()
-			volName += volNameSeparator + zone
+		switch zones.Len() {
+		case 0:
+			return gcecloud.PartialDiskInfo{
+				Name: name,
+			}, nil
+		case 1:
+			return gcecloud.ZonalDiskInfo{
+				Name: name,
+				Region: region,
+				Zone: zones.UnsortedList()[0],
+			}, nil
+		case 2:
+			return gcecloud.RegionalDiskInfo{
+				Name: name,
+				Region: region,
+			}, nil
+		default:
+			return nil, fmt.Errorf("Zone label should not contain more than 2 zones.")
 		}
 	}
 
-	return volName
+	return nil, fmt.Errorf("Spec does not reference a GCE volume type")
 }

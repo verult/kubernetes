@@ -57,8 +57,6 @@ const (
 	diskSourceURITemplateRegional   = "%s/regions/%s/disks/%s" //{gce.projectID}/regions/{disk.Region}/disks/repd"
 
 	replicaZoneURITemplateSingleZone = "%s/zones/%s" // {gce.projectID}/zones/{disk.Zone}
-
-	deviceNameSeparator  = "_" // TODO (verult) can this be passed in another way? Why do both gce_disks and gce_util need this param?
 )
 
 type diskServiceManager interface {
@@ -426,22 +424,23 @@ func (manager *gceServiceManager) RegionalResizeDiskOnCloudProvider(disk *GCEDis
 // Disks is interface for manipulation with GCE PDs.
 type Disks interface {
 	// AttachDisk attaches given disk to the node with the specified NodeName.
+	// Returns device name if attach is successful.
 	// Current instance is used when instanceID is empty string.
-	AttachDisk(key DiskKey, nodeName types.NodeName, readOnly bool) error
+	AttachDisk(key DiskInfo, nodeName types.NodeName, readOnly bool) error
 
 	// TODO (verult) Shouldn't pass devicePath as param - only cloud provider knows about device path.
 	// DetachDisk detaches given disk to the node with the specified NodeName.
 	// Current instance is used when nodeName is empty string.
-	DetachDisk(key DiskKey, nodeName types.NodeName) error
+	DetachDisk(key DiskInfo, nodeName types.NodeName) error
 
 	// TODO (verult) identify by device name
 	// DiskIsAttached checks if a disk is attached to the node with the specified NodeName.
-	DiskIsAttached(key DiskKey, nodeName types.NodeName) (bool, error)
+	DiskIsAttached(key DiskInfo, nodeName types.NodeName) (bool, error)
 
 	// TODO (verult) identify by device names
 	// DisksAreAttached is a batch function to check if a list of disks are attached
 	// to the node with the specified NodeName.
-	DisksAreAttached(key []DiskKey, nodeName types.NodeName) (map[DiskKey]bool, error)
+	DisksAreAttached(key []DiskInfo, nodeName types.NodeName) (map[DiskInfo]bool, error)
 
 	// CreateDisk creates a new PD with given properties. Tags are serialized
 	// as JSON into Description field.
@@ -453,11 +452,11 @@ type Disks interface {
 	CreateRegionalDisk(name string, diskType string, replicaZones sets.String, sizeGb int64, tags map[string]string) error
 
 	// DeleteDisk deletes PD. Zone can be empty, in which case the operation searches through all available zones.
-	DeleteDisk(key DiskKey) error
+	DeleteDisk(key DiskInfo) error
 
 	// TODO (verult) Need to identify based on zone as well.
 	// ResizeDisk resizes PD and returns new disk size
-	ResizeDisk(key DiskKey, oldSize resource.Quantity, newSize resource.Quantity) (resource.Quantity, error)
+	ResizeDisk(key DiskInfo, oldSize resource.Quantity, newSize resource.Quantity) (resource.Quantity, error)
 
 	// TODO (verult) This needs key to identify PD, but need to think about how callers compute this key
 	// GetAutoLabelsForPD returns labels to apply to PersistentVolume
@@ -522,7 +521,7 @@ func (gce *GCECloud) GetLabelsForVolume(ctx context.Context, pv *v1.PersistentVo
 	return labels, nil
 }
 
-func (gce *GCECloud) AttachDisk(key DiskKey, nodeName types.NodeName, readOnly bool) error {
+func (gce *GCECloud) AttachDisk(key DiskInfo, nodeName types.NodeName, readOnly bool) error {
 	instanceName := mapNodeNameToInstanceName(nodeName)
 	instance, err := gce.getInstanceByName(instanceName)
 	if err != nil {
@@ -551,10 +550,11 @@ func (gce *GCECloud) AttachDisk(key DiskKey, nodeName types.NodeName, readOnly b
 		readWrite = "READ_ONLY"
 	}
 
+	// TODO (verult) Pull device name calculation logic out here from AttachDiskOnCloudProvider().
 	return mc.Observe(gce.manager.AttachDiskOnCloudProvider(disk, readWrite, instance.Zone, instance.Name))
 }
 
-func (gce *GCECloud) DetachDisk(key DiskKey, nodeName types.NodeName) error {
+func (gce *GCECloud) DetachDisk(key DiskInfo, nodeName types.NodeName) error {
 	instanceName := mapNodeNameToInstanceName(nodeName)
 	inst, err := gce.getInstanceByName(instanceName)
 	if err != nil {
@@ -574,7 +574,8 @@ func (gce *GCECloud) DetachDisk(key DiskKey, nodeName types.NodeName) error {
 	return mc.Observe(gce.manager.DetachDiskOnCloudProvider(inst.Zone, inst.Name, keyToDeviceName(key)))
 }
 
-func (gce *GCECloud) DiskIsAttached(key DiskKey, nodeName types.NodeName) (bool, error) {
+// TODO (verult) Must check two device names for zonal PDs: <diskname> and <diskname>_<region>_<zone>
+func (gce *GCECloud) DiskIsAttached(key DiskInfo, nodeName types.NodeName) (bool, error) {
 	instanceName := mapNodeNameToInstanceName(nodeName)
 	instance, err := gce.getInstanceByName(instanceName)
 	if err != nil {
@@ -590,7 +591,7 @@ func (gce *GCECloud) DiskIsAttached(key DiskKey, nodeName types.NodeName) (bool,
 		return false, err
 	}
 
-	deviceName := keyToDeviceName(key)
+	deviceName := keyToDeviceName(key) // TODO (verult) update, this is wrong
 	for _, disk := range instance.Disks {
 		if disk.DeviceName == deviceName {
 			// Disk is still attached to node
@@ -601,8 +602,9 @@ func (gce *GCECloud) DiskIsAttached(key DiskKey, nodeName types.NodeName) (bool,
 	return false, nil
 }
 
-func (gce *GCECloud) DisksAreAttached(keys []DiskKey, nodeName types.NodeName) (map[DiskKey]bool, error) {
-	attached := make(map[DiskKey]bool)
+// TODO (verult) Must check two device names for zonal PDs: <diskname> and <diskname>_<region>_<zone>
+func (gce *GCECloud) DisksAreAttached(keys []DiskInfo, nodeName types.NodeName) (map[DiskInfo]bool, error) {
+	attached := make(map[DiskInfo]bool)
 	for _, key := range keys {
 		attached[key] = false
 	}
@@ -622,7 +624,7 @@ func (gce *GCECloud) DisksAreAttached(keys []DiskKey, nodeName types.NodeName) (
 	}
 
 	for _, key := range keys {
-		deviceName := keyToDeviceName(key)
+		deviceName := keyToDeviceName(key) // TODO (verult) update, this is wrong
 		for _, instanceDisk := range instance.Disks {
 			if instanceDisk.DeviceName == deviceName {
 				// Disk is still attached to node
@@ -724,7 +726,7 @@ func getDiskType(diskType string) (string, error) {
 	}
 }
 
-func (gce *GCECloud) DeleteDisk(key DiskKey) error {
+func (gce *GCECloud) DeleteDisk(key DiskInfo) error {
 	var err error
 	var mc *metricContext
 
@@ -766,7 +768,7 @@ func (gce *GCECloud) DeleteDisk(key DiskKey) error {
 }
 
 // ResizeDisk expands given disk and returns new disk size
-func (gce *GCECloud) ResizeDisk(key DiskKey, oldSize resource.Quantity, newSize resource.Quantity) (resource.Quantity, error) {
+func (gce *GCECloud) ResizeDisk(key DiskInfo, oldSize resource.Quantity, newSize resource.Quantity) (resource.Quantity, error) {
 	// TODO (verult) After DiskManager refactor, may not need to fetch disk all the time.
 	var disk *GCEDisk
 	var err error
@@ -1025,7 +1027,7 @@ func isGCEError(err error, reason string) bool {
 	return false
 }
 
-func keyToDeviceName(key DiskKey) string {
+func keyToDeviceName(key DiskInfo) string {
 	devName := key.Name
 	// If key only contains Name, it represents an in-line volume, so we stop here.
 

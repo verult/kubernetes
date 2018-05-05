@@ -258,7 +258,7 @@ type gcePersistentDisk struct {
 	volName string
 	podUID  types.UID
 	// Unique identifier of the PD, used to find the disk resource in the provider.
-	diskKey gce.DiskKey
+	diskKey gce.DiskInfo
 	// Specifies the partition to mount
 	partition string
 	// Utility interface to provision and delete disks

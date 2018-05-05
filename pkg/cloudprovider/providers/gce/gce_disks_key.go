@@ -16,51 +16,104 @@ limitations under the License.
 
 package gce
 
-import (
-	"k8s.io/apimachinery/pkg/util/sets"
-	"strings"
-)
+import "strings"
 
-// TODO (verult) this is really bad - this file contains knowledge between cloud provider and plugin.
-//     Need better abstraction.
-// TODO (verult) Should this be called a Key if it's many-to-one?
+const deviceNameSeparator = "_"
 
-/*
- * In-line volume: only Name is set.
- * PV with regular PD: Name, Region, ZoneSet always set.
- * PV with regional PD: Name, Region always set; ZoneSet is set if constructed from spec,
- *     unset if constructed from device name.
- */
-type DiskKey struct {
+type DiskInfo interface{
+	GetDeviceName() string
+}
+
+type PartialDiskInfo struct {
+	Name string
+}
+
+type RegionalDiskInfo struct {
 	Name string
 	Region string
-	ZoneSet sets.String
 }
 
-// TODO (verult) Create constructor that validates key before creation.
-// If ZoneSet.Len() > 0, Region != ""
-
-func (key *DiskKey) IsRegionalPD() bool {
-	return key.Region != "" && key.ZoneSet.Len() != 1
+type ZonalDiskInfo struct {
+	Name string
+	Region string
+	Zone string
 }
 
-func (key *DiskKey) IsZoneInfoAvailable() bool {
-	return key.ZoneSet.Len() > 0
+func (d PartialDiskInfo) GetDeviceName() string {
+	return d.Name
 }
 
-// "{<name>,<region>,<zone1__zone2>}"
-func (key *DiskKey) String() string {
-	str := "{" + key.Name
+func (d RegionalDiskInfo) GetDeviceName() string {
+	return d.Name + deviceNameSeparator + d.Region
+}
 
-	if key.Region != "" {
-		str += "," + key.Region
+func (d ZonalDiskInfo) GetDeviceName() string {
+	return d.Name + deviceNameSeparator + d.Region + deviceNameSeparator + d.Zone
+}
 
-		if key.ZoneSet.Len() > 0 {
-			str += "," + strings.Join(key.ZoneSet.List(), "__")
+func DeviceNameToKey(deviceName string) DiskInfo {
+	parts := strings.Split(deviceName, deviceNameSeparator)
+
+	switch len(parts) {
+	case 1:
+		return PartialDiskInfo{
+			Name: parts[0],
 		}
+	case 2:
+		return RegionalDiskInfo{
+			Name: parts[0],
+			Region: parts[1],
+		}
+	case 3:
+		return ZonalDiskInfo{
+			Name: parts[0],
+			Region: parts[1],
+			Zone: parts[2],
+		}
+	default: // Never happens
+		return nil
 	}
-
-	str += "}"
-
-	return str
 }
+
+// TODO (verult) Stringer method
+
+//
+///*
+// * In-line volume: only Name is set.
+// * PV with regular PD: Name, Region, ZoneSet always set.
+// * PV with regional PD: Name, Region always set; ZoneSet is set if constructed from spec,
+// *     unset if constructed from device name.
+// */
+//type DiskInfo struct {
+//	Name string
+//	Region string
+//	ZoneSet sets.String
+//}
+//
+//// TODO (verult) Create constructor that validates key before creation.
+//// If ZoneSet.Len() > 0, Region != ""
+//
+//func (key *DiskInfo) IsRegionalPD() bool {
+//	return key.Region != "" && key.ZoneSet.Len() != 1
+//}
+//
+//func (key *DiskInfo) IsZoneInfoAvailable() bool {
+//	return key.ZoneSet.Len() > 0
+//}
+//
+//// "{<name>,<region>,<zone1__zone2>}"
+//func (key *DiskInfo) String() string {
+//	str := "{" + key.Name
+//
+//	if key.Region != "" {
+//		str += "," + key.Region
+//
+//		if key.ZoneSet.Len() > 0 {
+//			str += "," + strings.Join(key.ZoneSet.List(), "__")
+//		}
+//	}
+//
+//	str += "}"
+//
+//	return str
+//}
