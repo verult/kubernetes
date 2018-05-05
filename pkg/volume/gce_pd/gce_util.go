@@ -68,15 +68,15 @@ func (util *GCEDiskUtil) DeleteVolume(d *gcePersistentDiskDeleter) error {
 		return err
 	}
 
-	err = cloud.DeleteDisk(d.diskKey)
+	err = cloud.DeleteDisk(d.diskInfo)
 
 	if err != nil {
-		glog.V(2).Infof("Error deleting GCE PD volume %v: %v", d.diskKey, err)
+		glog.V(2).Infof("Error deleting GCE PD volume %v: %v", d.diskInfo, err)
 		// GCE cloud provider returns volume.deletedVolumeInUseError when
 		// necessary, no handling needed here.
 		return err
 	}
-	glog.V(2).Infof("Successfully deleted GCE PD volume %v", d.diskKey)
+	glog.V(2).Infof("Successfully deleted GCE PD volume %v", d.diskInfo)
 	return nil
 }
 
@@ -303,7 +303,7 @@ func verifyAllPathsRemoved(devicePaths []string) (bool, error) {
 
 // Returns list of all /dev/disk/by-id/* paths for given PD.
 func getDiskByIdPaths(key gcecloud.DiskInfo, partition string) []string {
-	deviceName := keyToVolName(key) // TODO (verult) change, this is wrong
+	deviceName := key.GetDeviceName()
 	devicePaths := []string{
 		path.Join(diskByIdPath, diskGooglePrefix+deviceName),
 		path.Join(diskByIdPath, diskScsiGooglePrefix+deviceName),
@@ -385,7 +385,7 @@ func udevadmChangeToDrive(drivePath string) error {
 	return nil
 }
 
-func specToKey(spec *volume.Spec) (gcecloud.DiskInfo, error) {
+func specToDiskInfo(spec *volume.Spec) (gcecloud.DiskInfo, error) {
 	if spec.Volume != nil && spec.Volume.GCEPersistentDisk != nil {
 
 		return gcecloud.PartialDiskInfo{

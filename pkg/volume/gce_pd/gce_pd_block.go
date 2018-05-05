@@ -106,7 +106,7 @@ func (plugin *gcePersistentDiskPlugin) newBlockVolumeMapperInternal(spec *volume
 		gcePersistentDisk: &gcePersistentDisk{
 			volName:   spec.Name(),
 			podUID:    podUID,
-			diskKey:   pdName,
+			diskInfo:  pdName,
 			partition: partition,
 			manager:   manager,
 			mounter:   mounter,
@@ -122,11 +122,11 @@ func (plugin *gcePersistentDiskPlugin) NewBlockVolumeUnmapper(volName string, po
 func (plugin *gcePersistentDiskPlugin) newUnmapperInternal(volName string, podUID types.UID, manager pdManager) (volume.BlockVolumeUnmapper, error) {
 	return &gcePersistentDiskUnmapper{
 		gcePersistentDisk: &gcePersistentDisk{
-			volName: volName,
-			podUID:  podUID,
-			diskKey: volName,
-			manager: manager,
-			plugin:  plugin,
+			volName:  volName,
+			podUID:   podUID,
+			diskInfo: volName,
+			manager:  manager,
+			plugin:   plugin,
 		}}, nil
 }
 

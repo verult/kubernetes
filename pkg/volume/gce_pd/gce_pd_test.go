@@ -85,8 +85,8 @@ func (fake *fakePDManager) CreateVolume(c *gcePersistentDiskProvisioner) (volume
 }
 
 func (fake *fakePDManager) DeleteVolume(cd *gcePersistentDiskDeleter) error {
-	if cd.diskKey != "test-gce-volume-name" {
-		return fmt.Errorf("Deleter got unexpected volume name: %s", cd.diskKey)
+	if cd.diskInfo != "test-gce-volume-name" {
+		return fmt.Errorf("Deleter got unexpected volume name: %s", cd.diskInfo)
 	}
 	return nil
 }

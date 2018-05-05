@@ -20,7 +20,9 @@ import "strings"
 
 const deviceNameSeparator = "_"
 
+// TODO (verult) We need a better name than DiskInfo
 type DiskInfo interface{
+	GetDiskName() string
 	GetDeviceName() string
 }
 
@@ -39,6 +41,10 @@ type ZonalDiskInfo struct {
 	Zone string
 }
 
+func (d PartialDiskInfo) GetDiskName() string { return d.Name }
+func (d RegionalDiskInfo) GetDiskName() string { return d.Name }
+func (d ZonalDiskInfo) GetDiskName() string { return d.Name }
+
 func (d PartialDiskInfo) GetDeviceName() string {
 	return d.Name
 }
@@ -51,7 +57,7 @@ func (d ZonalDiskInfo) GetDeviceName() string {
 	return d.Name + deviceNameSeparator + d.Region + deviceNameSeparator + d.Zone
 }
 
-func DeviceNameToKey(deviceName string) DiskInfo {
+func DeviceNameToDiskInfo(deviceName string) DiskInfo {
 	parts := strings.Split(deviceName, deviceNameSeparator)
 
 	switch len(parts) {
@@ -70,7 +76,7 @@ func DeviceNameToKey(deviceName string) DiskInfo {
 			Region: parts[1],
 			Zone: parts[2],
 		}
-	default: // Never happens
+	default: // Should not happen given a valid device name
 		return nil
 	}
 }
