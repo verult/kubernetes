@@ -311,10 +311,10 @@ func verifyAllPathsRemoved(devicePaths []string) (bool, error) {
 }
 
 // Returns list of all /dev/disk/by-id/* paths for given PD.
-func getDiskByIdPaths(pdName string, partition string) []string {
+func getDiskByIdPaths(deviceName string, partition string) []string {
 	devicePaths := []string{
-		path.Join(diskByIdPath, diskGooglePrefix+pdName),
-		path.Join(diskByIdPath, diskScsiGooglePrefix+pdName),
+		path.Join(diskByIdPath, diskGooglePrefix+deviceName),
+		path.Join(diskByIdPath, diskScsiGooglePrefix+deviceName),
 	}
 
 	if partition != "" {

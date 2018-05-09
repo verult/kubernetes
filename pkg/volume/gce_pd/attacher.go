@@ -147,6 +147,11 @@ func (attacher *gcePersistentDiskAttacher) WaitForAttach(spec *volume.Spec, devi
 		return "", err
 	}
 
+	deviceName, err := getDeviceName(spec)
+	if err != nil {
+		return "", err
+	}
+
 	pdName := volumeSource.PDName
 	partition := ""
 	if volumeSource.Partition != 0 {
@@ -159,7 +164,7 @@ func (attacher *gcePersistentDiskAttacher) WaitForAttach(spec *volume.Spec, devi
 	}
 	sdBeforeSet := sets.NewString(sdBefore...)
 
-	devicePaths := getDiskByIdPaths(pdName, partition)
+	devicePaths := getDiskByIdPaths(deviceName, partition)
 	for {
 		select {
 		case <-ticker.C:

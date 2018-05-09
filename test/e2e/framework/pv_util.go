@@ -762,7 +762,7 @@ func deletePD(pdName string) error {
 			return err
 		}
 
-		err = gceCloud.DeleteDisk(pdName)
+		err = gceCloud.DeleteDisk(pdName, "")
 
 		if err != nil {
 			if gerr, ok := err.(*googleapi.Error); ok && len(gerr.Errors) > 0 && gerr.Errors[0].Reason == "notFound" {
