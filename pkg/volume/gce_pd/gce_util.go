@@ -414,7 +414,3 @@ func getDeviceName(spec *volume.Spec) (string, error) {
 	}
 	return deviceName, nil
 }
-
-func getPDNameFromDeviceName(volumeName string) string {
-	return strings.Split(volumeName, volNameSeparator)[0]
-}

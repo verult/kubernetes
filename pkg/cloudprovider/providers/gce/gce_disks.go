@@ -96,7 +96,7 @@ type diskServiceManager interface {
 	DetachDiskOnCloudProvider(
 		instanceZone string,
 		instanceName string,
-		devicePath string) error
+		deviceName string) error
 
 	ResizeDiskOnCloudProvider(disk *GCEDisk, sizeGb int64, zone string) error
 	RegionalResizeDiskOnCloudProvider(disk *GCEDisk, sizeGb int64) error
@@ -214,10 +214,10 @@ func (manager *gceServiceManager) AttachDiskOnCloudProvider(
 func (manager *gceServiceManager) DetachDiskOnCloudProvider(
 	instanceZone string,
 	instanceName string,
-	devicePath string) error {
+	deviceName string) error {
 	ctx, cancel := cloud.ContextWithCallTimeout()
 	defer cancel()
-	return manager.gce.c.Instances().DetachDisk(ctx, meta.ZonalKey(instanceName, instanceZone), devicePath)
+	return manager.gce.c.Instances().DetachDisk(ctx, meta.ZonalKey(instanceName, instanceZone), deviceName)
 }
 
 func (manager *gceServiceManager) GetDiskFromCloudProvider(
@@ -460,16 +460,16 @@ type Disks interface {
 	// TODO (verult) Shouldn't pass devicePath as param - only cloud provider knows about device path.
 	// DetachDisk detaches given disk to the node with the specified NodeName.
 	// Current instance is used when nodeName is empty string.
-	DetachDisk(devicePath string, nodeName types.NodeName) error
+	DetachDisk(deviceName string, nodeName types.NodeName) error
 
 	// TODO (verult) identify by device name
 	// DiskIsAttached checks if a disk is attached to the node with the specified NodeName.
-	DiskIsAttached(diskName string, nodeName types.NodeName) (bool, error)
+	DiskIsAttached(deviceName string, nodeName types.NodeName) (bool, error)
 
 	// TODO (verult) identify by device names
 	// DisksAreAttached is a batch function to check if a list of disks are attached
 	// to the node with the specified NodeName.
-	DisksAreAttached(diskNames []string, nodeName types.NodeName) (map[string]bool, error)
+	DisksAreAttached(deviceNames []string, nodeName types.NodeName) (map[string]bool, error)
 
 	// CreateDisk creates a new PD with given properties. Tags are serialized
 	// as JSON into Description field.
@@ -584,7 +584,7 @@ func (gce *GCECloud) AttachDisk(diskName string, nodeName types.NodeName, readOn
 	return mc.Observe(gce.manager.AttachDiskOnCloudProvider(disk, readWrite, instance.Zone, instance.Name))
 }
 
-func (gce *GCECloud) DetachDisk(devicePath string, nodeName types.NodeName) error {
+func (gce *GCECloud) DetachDisk(deviceName string, nodeName types.NodeName) error {
 	instanceName := mapNodeNameToInstanceName(nodeName)
 	inst, err := gce.getInstanceByName(instanceName)
 	if err != nil {
@@ -593,7 +593,7 @@ func (gce *GCECloud) DetachDisk(devicePath string, nodeName types.NodeName) erro
 			glog.Warningf(
 				"Instance %q does not exist. DetachDisk will assume PD %q is not attached to it.",
 				instanceName,
-				devicePath)
+				deviceName)
 			return nil
 		}
 
@@ -601,10 +601,10 @@ func (gce *GCECloud) DetachDisk(devicePath string, nodeName types.NodeName) erro
 	}
 
 	mc := newDiskMetricContextZonal("detach", gce.region, inst.Zone)
-	return mc.Observe(gce.manager.DetachDiskOnCloudProvider(inst.Zone, inst.Name, devicePath))
+	return mc.Observe(gce.manager.DetachDiskOnCloudProvider(inst.Zone, inst.Name, deviceName))
 }
 
-func (gce *GCECloud) DiskIsAttached(diskName string, nodeName types.NodeName) (bool, error) {
+func (gce *GCECloud) DiskIsAttached(deviceName string, nodeName types.NodeName) (bool, error) {
 	instanceName := mapNodeNameToInstanceName(nodeName)
 	instance, err := gce.getInstanceByName(instanceName)
 	if err != nil {
@@ -613,7 +613,7 @@ func (gce *GCECloud) DiskIsAttached(diskName string, nodeName types.NodeName) (b
 			glog.Warningf(
 				"Instance %q does not exist. DiskIsAttached will assume PD %q is not attached to it.",
 				instanceName,
-				diskName)
+				deviceName)
 			return false, nil
 		}
 
@@ -621,7 +621,7 @@ func (gce *GCECloud) DiskIsAttached(diskName string, nodeName types.NodeName) (b
 	}
 
 	for _, disk := range instance.Disks {
-		if disk.DeviceName == diskName {
+		if disk.DeviceName == deviceName {
 			// Disk is still attached to node
 			return true, nil
 		}
@@ -630,10 +630,10 @@ func (gce *GCECloud) DiskIsAttached(diskName string, nodeName types.NodeName) (b
 	return false, nil
 }
 
-func (gce *GCECloud) DisksAreAttached(diskNames []string, nodeName types.NodeName) (map[string]bool, error) {
+func (gce *GCECloud) DisksAreAttached(deviceNames []string, nodeName types.NodeName) (map[string]bool, error) {
 	attached := make(map[string]bool)
-	for _, diskName := range diskNames {
-		attached[diskName] = false
+	for _, deviceName := range deviceNames {
+		attached[deviceName] = false
 	}
 	instanceName := mapNodeNameToInstanceName(nodeName)
 	instance, err := gce.getInstanceByName(instanceName)
@@ -643,7 +643,7 @@ func (gce *GCECloud) DisksAreAttached(diskNames []string, nodeName types.NodeNam
 			glog.Warningf(
 				"Instance %q does not exist. DisksAreAttached will assume PD %v are not attached to it.",
 				instanceName,
-				diskNames)
+				deviceNames)
 			return attached, nil
 		}
 
@@ -651,10 +651,10 @@ func (gce *GCECloud) DisksAreAttached(diskNames []string, nodeName types.NodeNam
 	}
 
 	for _, instanceDisk := range instance.Disks {
-		for _, diskName := range diskNames {
-			if instanceDisk.DeviceName == diskName {
+		for _, deviceName := range deviceNames {
+			if instanceDisk.DeviceName == deviceName {
 				// Disk is still attached to node
-				attached[diskName] = true
+				attached[deviceName] = true
 			}
 		}
 	}
