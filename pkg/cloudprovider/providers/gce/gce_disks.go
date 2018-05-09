@@ -494,7 +494,7 @@ type Disks interface {
 	// representing this PD, namely failure domain and zone.
 	// zone can be provided to specify the zone for the PD,
 	// if empty all managed zones will be searched.
-	GetAutoLabelsForPD(name string, zone string) (map[string]string, error)
+	GetAutoLabelsForPD(name string, zone string, regional *bool) (map[string]string, error)
 }
 
 // GCECloud implements Disks.
@@ -544,7 +544,7 @@ func (gce *GCECloud) GetLabelsForVolume(ctx context.Context, pv *v1.PersistentVo
 	// If the zone is already labeled, honor the hint
 	zone := pv.Labels[kubeletapis.LabelZoneFailureDomain]
 
-	labels, err := gce.GetAutoLabelsForPD(pv.Spec.GCEPersistentDisk.PDName, zone)
+	labels, err := gce.GetAutoLabelsForPD(pv.Spec.GCEPersistentDisk.PDName, zone, nil /* regional */)
 	if err != nil {
 		return nil, err
 	}
@@ -851,15 +851,27 @@ func (gce *GCECloud) ResizeDisk(diskToResize string, oldSize resource.Quantity, 
 	}
 }
 
+// TODO (verult) Update comments (RePD is never searched if input is ambiguous)
+// TODO (verult) caller could provide either zone or regional hints, but not both. Could there be a better way?
+// TODO (verult) TEST!!!!! I don't have confidence in this piece of code
 // Builds the labels that should be automatically added to a PersistentVolume backed by a GCE PD
 // Specifically, this builds FailureDomain (zone) and Region labels.
 // The PersistentVolumeLabel admission controller calls this and adds the labels when a PV is created.
 // If zone is specified, the volume will only be found in the specified zone,
 // otherwise all managed zones will be searched.
-func (gce *GCECloud) GetAutoLabelsForPD(name string, zone string) (map[string]string, error) {
+func (gce *GCECloud) GetAutoLabelsForPD(name string, zone string, regional *bool) (map[string]string, error) {
+	// If regional == true (zone == ""), only scan for regional disk
+	// If regional == false (zone == ""), only scan for regular disk
+
+	// If regional == nil && zone == "", scan for both regional and regular disks.
+	// If regional == nil && zone != "", scan for regional disk or regular disk depending on zone
+
 	var disk *GCEDisk
 	var err error
-	if zone == "" {
+
+	if regional == nil && zone == "" {
+		// get regional disk and scan regular disks
+
 		// For regional PDs this is fine, but for zonal PDs we would like as far
 		// as possible to avoid this case, because GCE doesn't guarantee that
 		// volumes are uniquely named per region, just per zone. However,
@@ -869,38 +881,62 @@ func (gce *GCECloud) GetAutoLabelsForPD(name string, zone string) (map[string]st
 		// passed for most cases that we can control, e.g. dynamic volume
 		// provisioning).
 		disk, err = gce.GetDiskByNameUnknownZone(name)
-		if err != nil {
+		if err != nil && err != cloudprovider.DiskNotFound {
 			return nil, err
 		}
-	} else {
-		// We could assume the disks exists; we have all the information we need
-		// However it is more consistent to ensure the disk exists,
-		// and in future we may gather addition information (e.g. disk type, IOPS etc)
-		if utilfeature.DefaultFeatureGate.Enabled(features.GCERegionalPersistentDisk) {
-			zoneSet, err := volumeutil.LabelZonesToSet(zone)
-			if err != nil {
-				glog.Warningf("Failed to parse zone field: %q. Will use raw field.", zone)
-			}
 
-			if len(zoneSet) > 1 {
-				// Regional PD
-				disk, err = gce.getRegionalDiskByName(name)
-				if err != nil {
-					return nil, err
-				}
-			} else {
-				// Zonal PD
-				disk, err = gce.getDiskByName(name, zone)
-				if err != nil {
-					return nil, err
-				}
-			}
-		} else {
-			disk, err = gce.getDiskByName(name, zone)
-			if err != nil {
+		// TODO (verult) is flag gate necessary?
+		if utilfeature.DefaultFeatureGate.Enabled(features.GCERegionalPersistentDisk) {
+			regionalDisk, err := gce.getRegionalDiskByName(name)
+
+			if disk != nil && regionalDisk != nil {
+				return nil, fmt.Errorf("Both regional and regular PDs were found with name %q", name)
+			} else if disk == nil && regionalDisk == nil {
 				return nil, err
-			}
+			} else if disk == nil && regionalDisk != nil {
+				disk = regionalDisk
+			} // else disk != nil && regionalDisk == nil, use the previously found regular disk.
 		}
+
+	} else if regional == nil && zone != "" {
+		// get either regional disk or regular disk depending on zone count
+
+		zoneSet, zoneErr := volumeutil.LabelZonesToSet(zone)
+		if zoneErr != nil {
+			glog.Warningf("Failed to parse zone field: %q. Will use raw field.", zone)
+		}
+
+		if len(zoneSet) > 1 {
+			disk, err = gce.getRegionalDiskByName(name)
+		} else { // len(zoneSet) == 1
+			disk, err = gce.getDiskByName(name, zone)
+		}
+
+	} else if *regional && zone == "" {
+		// get regional disk
+		disk, err = gce.getRegionalDiskByName(name)
+	} else if *regional && zone != "" {
+		// Programming error
+		return nil, fmt.Errorf("zone and regional hints can't both be specified.")
+	} else if !*regional && zone == "" {
+		// scan for regular disk
+
+		// For zonal PDs we would like as far
+		// as possible to avoid this case, because GCE doesn't guarantee that
+		// volumes are uniquely named per region, just per zone. However,
+		// creation of GCE PDs was originally done only by name, so we have to
+		// continue to support that.
+		// However, wherever possible the zone should be passed (and it is
+		// passed for most cases that we can control, e.g. dynamic volume
+		// provisioning).
+		disk, err = gce.GetDiskByNameUnknownZone(name)
+	} else { // !*regional && zone != ""
+		// Programming error
+		return nil, fmt.Errorf("zone and regional hints can't both be specified.")
+	}
+
+	if err != nil {
+		return nil, err
 	}
 
 	labels := make(map[string]string)
@@ -977,7 +1013,7 @@ func (gce *GCECloud) getRegionalDiskByName(diskName string) (*GCEDisk, error) {
 	return disk, err
 }
 
-// Scans all managed zones to return the GCE PD
+// Scans all managed zones to return the GCE PD. Only non-regional PDs are searched.
 // Prefer getDiskByName, if the zone can be established
 // Return cloudprovider.DiskNotFound if the given disk cannot be found in any zone
 func (gce *GCECloud) GetDiskByNameUnknownZone(diskName string) (*GCEDisk, error) {

@@ -213,7 +213,8 @@ func (gceutil *GCEDiskUtil) CreateVolume(c *gcePersistentDiskProvisioner) (strin
 		return "", 0, nil, "", fmt.Errorf("replication-type of '%s' is not supported", replicationType)
 	}
 
-	labels, err := cloud.GetAutoLabelsForPD(name, "" /* zone */)
+	regional := replicationType == replicationTypeRegionalPD
+	labels, err := cloud.GetAutoLabelsForPD(name, "" /* zone */, &regional) // TODO (verult) Must disambiguate with "regional" bool
 	if err != nil {
 		// We don't really want to leak the volume here...
 		glog.Errorf("error getting labels for volume %q: %v", name, err)
