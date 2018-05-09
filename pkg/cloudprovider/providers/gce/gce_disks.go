@@ -488,7 +488,7 @@ type Disks interface {
 
 	// TODO (verult) Need to identify based on zone as well.
 	// ResizeDisk resizes PD and returns new disk size
-	ResizeDisk(diskToResize string, oldSize resource.Quantity, newSize resource.Quantity) (resource.Quantity, error)
+	ResizeDisk(diskToResize string, zoneSet sets.String, oldSize resource.Quantity, newSize resource.Quantity) (resource.Quantity, error)
 
 	// GetAutoLabelsForPD returns labels to apply to PersistentVolume
 	// representing this PD, namely failure domain and zone.
@@ -803,8 +803,17 @@ func (gce *GCECloud) DeleteRegionalDisk(name string) error {
 }
 
 // ResizeDisk expands given disk and returns new disk size
-func (gce *GCECloud) ResizeDisk(diskToResize string, oldSize resource.Quantity, newSize resource.Quantity) (resource.Quantity, error) {
-	disk, err := gce.GetDiskByNameUnknownZone(diskToResize)
+func (gce *GCECloud) ResizeDisk(diskToResize string, zoneSet sets.String, oldSize resource.Quantity, newSize resource.Quantity) (resource.Quantity, error) {
+	var disk *GCEDisk
+	var err error
+	switch zoneSet.Len() {
+	case 2:
+		disk, err = gce.findRegionalDiskByName(diskToResize)
+	case 1:
+		disk, err = gce.findDiskByName(diskToResize, zoneSet.UnsortedList()[0])
+	case 0:
+		disk, err = gce.GetDiskByNameUnknownZone(diskToResize)
+	}
 	if err != nil {
 		return oldSize, err
 	}

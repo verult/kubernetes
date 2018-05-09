@@ -283,7 +283,13 @@ func (plugin *gcePersistentDiskPlugin) ExpandVolumeDevice(
 		return oldSize, err
 	}
 	pdName := spec.PersistentVolume.Spec.GCEPersistentDisk.PDName
-	updatedQuantity, err := cloud.ResizeDisk(pdName, oldSize, newSize)
+	zoneSet := make(sets.String)
+	if spec.PersistentVolume != nil {
+		if zones, ok := spec.PersistentVolume.Labels[apis.LabelZoneFailureDomain]; ok {
+			zoneSet, _ = util.LabelZonesToSet(zones)
+		}
+	}
+	updatedQuantity, err := cloud.ResizeDisk(pdName, zoneSet, oldSize, newSize)
 
 	if err != nil {
 		return oldSize, err
