@@ -184,6 +184,7 @@ func (manager *gceServiceManager) AttachDiskOnCloudProvider(
 	}
 
 	// TODO (verult) can we do away with zoneInfo?
+	// TODO (verult) Have GCEPD plugin provide device name instead
 	var deviceName string
 	switch zoneInfo := disk.ZoneInfo.(type) {
 	case singleZone:

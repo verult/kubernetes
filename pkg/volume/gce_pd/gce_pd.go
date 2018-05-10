@@ -190,6 +190,11 @@ func (plugin *gcePersistentDiskPlugin) newMounterInternal(spec *volume.Spec, pod
 		return nil, err
 	}
 
+	deviceName, err := getDeviceName(spec)
+	if err != nil {
+		return nil, err
+	}
+
 	pdName := volumeSource.PDName
 	partition := ""
 	if volumeSource.Partition != 0 {
@@ -207,6 +212,7 @@ func (plugin *gcePersistentDiskPlugin) newMounterInternal(spec *volume.Spec, pod
 			plugin:          plugin,
 			MetricsProvider: volume.NewMetricsStatFS(getPath(podUID, spec.Name(), plugin.host)),
 		},
+		deviceName: deviceName,
 		readOnly: readOnly}, nil
 }
 
@@ -328,7 +334,7 @@ type pdManager interface {
 type gcePersistentDisk struct {
 	volName string
 	podUID  types.UID
-	// Unique identifier of the PD, used to find the disk resource in the provider.
+	// Unique identifier of the PD, used to find the disk resource in the provider. // TODO (verult) update comment
 	pdName string
 	// Specifies the partition to mount
 	partition string
@@ -342,6 +348,8 @@ type gcePersistentDisk struct {
 
 type gcePersistentDiskMounter struct {
 	*gcePersistentDisk
+	// TODO (verult) comment
+	deviceName string
 	// Specifies whether the disk will be mounted as read-only.
 	readOnly bool
 }
@@ -392,7 +400,7 @@ func (b *gcePersistentDiskMounter) SetUpAt(dir string, fsGroup *int64) error {
 		options = append(options, "ro")
 	}
 
-	globalPDPath := makeGlobalPDName(b.plugin.host, b.pdName)
+	globalPDPath := makeGlobalPDName(b.plugin.host, b.deviceName)
 	glog.V(4).Infof("attempting to mount %s", dir)
 
 	err = b.mounter.Mount(globalPDPath, dir, "", options)

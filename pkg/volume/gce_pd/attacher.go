@@ -98,7 +98,7 @@ func (attacher *gcePersistentDiskAttacher) Attach(spec *volume.Spec, nodeName ty
 		}
 	}
 
-	return path.Join(diskByIdPath, diskGooglePrefix+pdName), nil
+	return path.Join(diskByIdPath, diskGooglePrefix+deviceName), nil
 }
 
 func (attacher *gcePersistentDiskAttacher) VolumesAreAttached(specs []*volume.Spec, nodeName types.NodeName) (map[*volume.Spec]bool, error) {
@@ -186,12 +186,12 @@ func (attacher *gcePersistentDiskAttacher) WaitForAttach(spec *volume.Spec, devi
 
 func (attacher *gcePersistentDiskAttacher) GetDeviceMountPath(
 	spec *volume.Spec) (string, error) {
-	volumeSource, _, err := getVolumeSource(spec)
+	deviceName, err := getDeviceName(spec)
 	if err != nil {
 		return "", err
 	}
 
-	return makeGlobalPDName(attacher.host, volumeSource.PDName), nil
+	return makeGlobalPDName(attacher.host, deviceName), nil
 }
 
 // TODO (verult)
