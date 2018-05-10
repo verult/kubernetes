@@ -88,6 +88,7 @@ type diskServiceManager interface {
 	// Attach a persistent disk on GCE with the given disk spec to the specified instance.
 	AttachDiskOnCloudProvider(
 		disk *GCEDisk,
+		deviceName string,
 		readWrite string,
 		instanceZone string,
 		instanceName string) error
@@ -175,28 +176,13 @@ func (manager *gceServiceManager) CreateRegionalDiskOnCloudProvider(
 
 func (manager *gceServiceManager) AttachDiskOnCloudProvider(
 	disk *GCEDisk,
+	deviceName string,
 	readWrite string,
 	instanceZone string,
 	instanceName string) error {
 	source, err := manager.getDiskSourceURI(disk)
 	if err != nil {
 		return err
-	}
-
-	// TODO (verult) can we do away with zoneInfo?
-	// TODO (verult) Have GCEPD plugin provide device name instead
-	var deviceName string
-	switch zoneInfo := disk.ZoneInfo.(type) {
-	case singleZone:
-		deviceName = disk.Name
-	case multiZone:
-		deviceName = disk.Name + deviceNameRegionalSuffix
-	case nil:
-		// Unexpected, but sanity-check
-		return fmt.Errorf("PD did not have ZoneInfo: %v", disk)
-	default:
-		// Unexpected, but sanity-check
-		return fmt.Errorf("disk.ZoneInfo has unexpected type %T", zoneInfo)
 	}
 
 	attachedDiskV1 := &compute.AttachedDisk{
@@ -456,7 +442,7 @@ func (manager *gceServiceManager) RegionalResizeDiskOnCloudProvider(disk *GCEDis
 type Disks interface {
 	// AttachDisk attaches given disk to the node with the specified NodeName.
 	// Current instance is used when instanceID is empty string.
-	AttachDisk(diskName string, nodeName types.NodeName, readOnly bool, regional bool) error
+	AttachDisk(diskName string, nodeName types.NodeName, deviceName string, readOnly bool, regional bool) error
 
 	// TODO (verult) Shouldn't pass devicePath as param - only cloud provider knows about device path.
 	// DetachDisk detaches given disk to the node with the specified NodeName.
@@ -553,7 +539,7 @@ func (gce *GCECloud) GetLabelsForVolume(ctx context.Context, pv *v1.PersistentVo
 	return labels, nil
 }
 
-func (gce *GCECloud) AttachDisk(diskName string, nodeName types.NodeName, readOnly bool, regional bool) error {
+func (gce *GCECloud) AttachDisk(diskName string, nodeName types.NodeName, deviceName string, readOnly bool, regional bool) error {
 	instanceName := mapNodeNameToInstanceName(nodeName)
 	instance, err := gce.getInstanceByName(instanceName)
 	if err != nil {
@@ -582,7 +568,7 @@ func (gce *GCECloud) AttachDisk(diskName string, nodeName types.NodeName, readOn
 		readWrite = "READ_ONLY"
 	}
 
-	return mc.Observe(gce.manager.AttachDiskOnCloudProvider(disk, readWrite, instance.Zone, instance.Name))
+	return mc.Observe(gce.manager.AttachDiskOnCloudProvider(disk, deviceName, readWrite, instance.Zone, instance.Name))
 }
 
 func (gce *GCECloud) DetachDisk(deviceName string, nodeName types.NodeName) error {
