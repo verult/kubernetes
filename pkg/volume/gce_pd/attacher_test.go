@@ -32,6 +32,9 @@ import (
 	kubeletapis "k8s.io/kubernetes/pkg/kubelet/apis"
 	"strings"
 	"k8s.io/kubernetes/pkg/cloudprovider/providers/gce"
+	"path"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/kubernetes/pkg/kubelet/apis"
 )
 
 func TestGetDeviceName_Volume(t *testing.T) {
@@ -251,6 +254,133 @@ func TestAttachDetach(t *testing.T) {
 		t.Logf("Test %q succeeded", testcase.name)
 	}
 }
+//
+//type getDeviceMountPathTestCase struct {
+//	spec *volume.Spec
+//	expectedPath string
+//	expectedErr error
+//}
+
+// TODO (verult) test WaitForAttach, GetDeviceMountPath
+func TestGetDeviceMountPath(t *testing.T) {
+	tests := []testcase{
+		{
+			name: "GetDeviceMountPath_InlineVolume",
+			test: func(testcase *testcase) error {
+				attacher := newAttacher(testcase)
+				spec := &volume.Spec{
+					Volume: &v1.Volume{
+						Name: "vol1",
+						VolumeSource: v1.VolumeSource{
+							GCEPersistentDisk: &v1.GCEPersistentDiskVolumeSource{
+								PDName: "pd",
+								FSType: "ext4",
+							},
+						},
+					},
+				}
+				mntPath, err := attacher.GetDeviceMountPath(spec)
+
+				if err != nil {
+					return err
+				}
+
+				deviceName := path.Base(mntPath)
+				expectedDeviceName := "pd"
+
+				if deviceName != expectedDeviceName {
+					return fmt.Errorf("expected device name: %q; got: %q", expectedDeviceName, deviceName)
+				}
+
+				return nil
+			},
+		},
+		{
+			name: "GetDeviceMountPath_PV",
+			test: func(testcase *testcase) error {
+				attacher := newAttacher(testcase)
+				spec := &volume.Spec{
+					PersistentVolume: &v1.PersistentVolume{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: map[string]string{
+								apis.LabelZoneFailureDomain: "zone1",
+							},
+						},
+						Spec: v1.PersistentVolumeSpec{
+							PersistentVolumeSource: v1.PersistentVolumeSource{
+								GCEPersistentDisk: &v1.GCEPersistentDiskVolumeSource{
+									PDName:   "pd",
+									ReadOnly: false,
+								},
+							},
+						},
+					}}
+				mntPath, err := attacher.GetDeviceMountPath(spec)
+
+				if err != nil {
+					return err
+				}
+
+				deviceName := path.Base(mntPath)
+				expectedDeviceName := "pd"
+
+				if deviceName != expectedDeviceName {
+					return fmt.Errorf("expected device name: %q; got: %q", expectedDeviceName, deviceName)
+				}
+
+				return nil
+			},
+		},
+		{
+			name: "GetDeviceMountPath_PVRegional",
+			test: func(testcase *testcase) error {
+				attacher := newAttacher(testcase)
+				spec := &volume.Spec{
+					PersistentVolume: &v1.PersistentVolume{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: map[string]string{
+								apis.LabelZoneFailureDomain: "zone1__zone2",
+							},
+						},
+						Spec: v1.PersistentVolumeSpec{
+							PersistentVolumeSource: v1.PersistentVolumeSource{
+								GCEPersistentDisk: &v1.GCEPersistentDiskVolumeSource{
+									PDName:   "pd",
+									ReadOnly: false,
+								},
+							},
+						},
+					},
+				}
+				mntPath, err := attacher.GetDeviceMountPath(spec)
+
+				if err != nil {
+					return err
+				}
+
+				deviceName := path.Base(mntPath)
+				expectedDeviceName := "pd_regional"
+
+				if deviceName != expectedDeviceName {
+					return fmt.Errorf("expected device name: %q; got: %q", expectedDeviceName, deviceName)
+				}
+
+				return nil
+			},
+		},
+	}
+
+	for _, testcase := range tests {
+		testcase.t = t
+		err := testcase.test(&testcase)
+		if err != nil && testcase.expectedReturn == nil {
+			t.Errorf("%s failed: expected no errors, got %q", testcase.name, err.Error())
+		} else if err != testcase.expectedReturn {
+			t.Errorf("%s failed: expected err=%q, got %q", testcase.name, testcase.expectedReturn.Error(), err.Error())
+		}
+		t.Logf("Test %q succeeded", testcase.name)
+	}
+}
 
 // newPlugin creates a new gcePersistentDiskPlugin with fake cloud, NewAttacher
 // and NewDetacher won't work.
@@ -267,8 +397,9 @@ func newPlugin() *gcePersistentDiskPlugin {
 }
 
 func newAttacher(testcase *testcase) *gcePersistentDiskAttacher {
+	rootDir := "/tmp/gcepdAttacherTest"
 	return &gcePersistentDiskAttacher{
-		host:     nil,
+		host: volumetest.NewFakeVolumeHost(rootDir, nil, nil),
 		gceDisks: testcase,
 	}
 }
