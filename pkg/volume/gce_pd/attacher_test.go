@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	kubeletapis "k8s.io/kubernetes/pkg/kubelet/apis"
 	"strings"
+	"k8s.io/kubernetes/pkg/cloudprovider/providers/gce"
 )
 
 func TestGetDeviceName_Volume(t *testing.T) {
@@ -61,6 +62,21 @@ func TestGetDeviceName_PersistentVolume(t *testing.T) {
 	}
 }
 
+func TestGetDeviceName_PersistentVolumeRegional(t *testing.T) {
+	plugin := newPlugin()
+	name := "my-pd-pv"
+	zones := []string {"zone1", "zone2"}
+	spec := createPVSpec(name, true, zones)
+
+	deviceName, err := plugin.GetVolumeName(spec)
+	if err != nil {
+		t.Errorf("GetDeviceName error: %v", err)
+	}
+	if deviceName != name + volNameRegionalSuffix {
+		t.Errorf("GetDeviceName error: expected %s, got %s", name, deviceName)
+	}
+}
+
 // One testcase for TestAttachDetach table test below
 type testcase struct {
 	name string
@@ -79,26 +95,30 @@ type testcase struct {
 func TestAttachDetachRegional(t *testing.T) {
 	diskName := "disk"
 	nodeName := types.NodeName("instance")
+	deviceName := diskName + volNameRegionalSuffix
 	readOnly := false
 	regional := true
 	spec := createPVSpec(diskName, readOnly, []string{"zone1", "zone2"})
 	// Successful Attach call
 	testcase := testcase{
 		name:           "Attach_Regional_Positive",
-		diskIsAttached: diskIsAttachedCall{diskName, nodeName, false, nil},
-		attach:         attachCall{diskName, nodeName, readOnly, regional, nil},
+		diskIsAttached: diskIsAttachedCall{deviceName, nodeName, false, nil},
+		attach:         attachCall{diskName, nodeName, deviceName, readOnly, regional, nil},
 		test: func(testcase *testcase) error {
 			attacher := newAttacher(testcase)
 			devicePath, err := attacher.Attach(spec, nodeName)
-			if devicePath != "/dev/disk/by-id/google-disk" {
-				return fmt.Errorf("devicePath incorrect. Expected<\"/dev/disk/by-id/google-disk\"> Actual: <%q>", devicePath)
+			expectedPath := "/dev/disk/by-id/google-" + deviceName
+			if devicePath != expectedPath {
+				return fmt.Errorf("devicePath incorrect. Expected<%q> Actual: <%q>", expectedPath, devicePath)
 			}
 			return err
 		},
 	}
 
 	err := testcase.test(&testcase)
-	if err != testcase.expectedReturn {
+	if err != nil && testcase.expectedReturn == nil {
+		t.Errorf("%s failed: expected no errors, got %q", testcase.name, err.Error())
+	} else if err != testcase.expectedReturn {
 		t.Errorf("%s failed: expected err=%q, got %q", testcase.name, testcase.expectedReturn.Error(), err.Error())
 	}
 	t.Logf("Test %q succeeded", testcase.name)
@@ -107,6 +127,7 @@ func TestAttachDetachRegional(t *testing.T) {
 func TestAttachDetach(t *testing.T) {
 	diskName := "disk"
 	nodeName := types.NodeName("instance")
+	deviceName := diskName
 	readOnly := false
 	regional := false
 	spec := createVolSpec(diskName, readOnly)
@@ -117,8 +138,8 @@ func TestAttachDetach(t *testing.T) {
 		// Successful Attach call
 		{
 			name:           "Attach_Positive",
-			diskIsAttached: diskIsAttachedCall{diskName, nodeName, false, nil},
-			attach:         attachCall{diskName, nodeName, readOnly, regional, nil},
+			diskIsAttached: diskIsAttachedCall{deviceName, nodeName, false, nil},
+			attach:         attachCall{diskName, nodeName, deviceName, readOnly, regional, nil},
 			test: func(testcase *testcase) error {
 				attacher := newAttacher(testcase)
 				devicePath, err := attacher.Attach(spec, nodeName)
@@ -146,8 +167,8 @@ func TestAttachDetach(t *testing.T) {
 		// DiskIsAttached fails and Attach succeeds
 		{
 			name:           "Attach_Positive_CheckFails",
-			diskIsAttached: diskIsAttachedCall{diskName, nodeName, false, diskCheckError},
-			attach:         attachCall{diskName, nodeName, readOnly, regional, nil},
+			diskIsAttached: diskIsAttachedCall{deviceName, nodeName, false, diskCheckError},
+			attach:         attachCall{diskName, nodeName, deviceName, readOnly, regional, nil},
 			test: func(testcase *testcase) error {
 				attacher := newAttacher(testcase)
 				devicePath, err := attacher.Attach(spec, nodeName)
@@ -161,8 +182,8 @@ func TestAttachDetach(t *testing.T) {
 		// Attach call fails
 		{
 			name:           "Attach_Negative",
-			diskIsAttached: diskIsAttachedCall{diskName, nodeName, false, diskCheckError},
-			attach:         attachCall{diskName, nodeName, readOnly, regional, attachError},
+			diskIsAttached: diskIsAttachedCall{deviceName, nodeName, false, diskCheckError},
+			attach:         attachCall{diskName, nodeName, deviceName, readOnly, regional, attachError},
 			test: func(testcase *testcase) error {
 				attacher := newAttacher(testcase)
 				devicePath, err := attacher.Attach(spec, nodeName)
@@ -177,43 +198,43 @@ func TestAttachDetach(t *testing.T) {
 		// Detach succeeds
 		{
 			name:           "Detach_Positive",
-			diskIsAttached: diskIsAttachedCall{diskName, nodeName, true, nil},
-			detach:         detachCall{diskName, nodeName, nil},
+			diskIsAttached: diskIsAttachedCall{deviceName, nodeName, true, nil},
+			detach:         detachCall{deviceName, nodeName, nil},
 			test: func(testcase *testcase) error {
 				detacher := newDetacher(testcase)
-				return detacher.Detach(diskName, nodeName)
+				return detacher.Detach(deviceName, nodeName)
 			},
 		},
 
 		// Disk is already detached
 		{
 			name:           "Detach_Positive_AlreadyDetached",
-			diskIsAttached: diskIsAttachedCall{diskName, nodeName, false, nil},
+			diskIsAttached: diskIsAttachedCall{deviceName, nodeName, false, nil},
 			test: func(testcase *testcase) error {
 				detacher := newDetacher(testcase)
-				return detacher.Detach(diskName, nodeName)
+				return detacher.Detach(deviceName, nodeName)
 			},
 		},
 
 		// Detach succeeds when DiskIsAttached fails
 		{
 			name:           "Detach_Positive_CheckFails",
-			diskIsAttached: diskIsAttachedCall{diskName, nodeName, false, diskCheckError},
-			detach:         detachCall{diskName, nodeName, nil},
+			diskIsAttached: diskIsAttachedCall{deviceName, nodeName, false, diskCheckError},
+			detach:         detachCall{deviceName, nodeName, nil},
 			test: func(testcase *testcase) error {
 				detacher := newDetacher(testcase)
-				return detacher.Detach(diskName, nodeName)
+				return detacher.Detach(deviceName, nodeName)
 			},
 		},
 
 		// Detach fails
 		{
 			name:           "Detach_Negative",
-			diskIsAttached: diskIsAttachedCall{diskName, nodeName, false, diskCheckError},
-			detach:         detachCall{diskName, nodeName, detachError},
+			diskIsAttached: diskIsAttachedCall{deviceName, nodeName, false, diskCheckError},
+			detach:         detachCall{deviceName, nodeName, detachError},
 			test: func(testcase *testcase) error {
 				detacher := newDetacher(testcase)
-				return detacher.Detach(diskName, nodeName)
+				return detacher.Detach(deviceName, nodeName)
 			},
 			expectedReturn: detachError,
 		},
@@ -222,7 +243,9 @@ func TestAttachDetach(t *testing.T) {
 	for _, testcase := range tests {
 		testcase.t = t
 		err := testcase.test(&testcase)
-		if err != testcase.expectedReturn {
+		if err != nil && testcase.expectedReturn == nil {
+			t.Errorf("%s failed: expected no errors, got %q", testcase.name, err.Error())
+		} else if err != testcase.expectedReturn {
 			t.Errorf("%s failed: expected err=%q, got %q", testcase.name, testcase.expectedReturn.Error(), err.Error())
 		}
 		t.Logf("Test %q succeeded", testcase.name)
@@ -298,6 +321,7 @@ func createPVSpec(name string, readOnly bool, zones []string) *volume.Spec {
 type attachCall struct {
 	diskName string
 	nodeName types.NodeName
+	deviceName string
 	readOnly bool
 	regional bool
 	ret      error
@@ -310,13 +334,16 @@ type detachCall struct {
 }
 
 type diskIsAttachedCall struct {
-	diskName   string
+	deviceName string
 	nodeName   types.NodeName
 	isAttached bool
 	ret        error
 }
 
-func (testcase *testcase) AttachDisk(diskName string, nodeName types.NodeName, readOnly bool, regional bool) error {
+var _ gce.Disks = &testcase{}
+
+func (testcase *testcase) AttachDisk(diskName string, nodeName types.NodeName, deviceName string, readOnly bool, regional bool) error {
+	// TODO (verult) include deviceName check
 	expected := &testcase.attach
 
 	if expected.diskName == "" && expected.nodeName == "" {
@@ -336,6 +363,11 @@ func (testcase *testcase) AttachDisk(diskName string, nodeName types.NodeName, r
 		return errors.New("Unexpected AttachDisk call: wrong nodeName")
 	}
 
+	if expected.deviceName!= deviceName {
+		testcase.t.Errorf("Unexpected AttachDisk call: expected deviceName %s, got %s", expected.deviceName, deviceName)
+		return errors.New("Unexpected AttachDisk call: wrong deviceName")
+	}
+
 	if expected.readOnly != readOnly {
 		testcase.t.Errorf("Unexpected AttachDisk call: expected readOnly %v, got %v", expected.readOnly, readOnly)
 		return errors.New("Unexpected AttachDisk call: wrong readOnly")
@@ -351,6 +383,7 @@ func (testcase *testcase) AttachDisk(diskName string, nodeName types.NodeName, r
 	return expected.ret
 }
 
+// TODO (verult) refactor devicePath to deviceName
 func (testcase *testcase) DetachDisk(devicePath string, nodeName types.NodeName) error {
 	expected := &testcase.detach
 
@@ -376,19 +409,19 @@ func (testcase *testcase) DetachDisk(devicePath string, nodeName types.NodeName)
 	return expected.ret
 }
 
-func (testcase *testcase) DiskIsAttached(diskName string, nodeName types.NodeName) (bool, error) {
+func (testcase *testcase) DiskIsAttached(deviceName string, nodeName types.NodeName) (bool, error) {
 	expected := &testcase.diskIsAttached
 
-	if expected.diskName == "" && expected.nodeName == "" {
+	if expected.deviceName == "" && expected.nodeName == "" {
 		// testcase.diskIsAttached looks uninitialized, test did not expect to
 		// call DiskIsAttached
 		testcase.t.Errorf("Unexpected DiskIsAttached call!")
 		return false, errors.New("Unexpected DiskIsAttached call!")
 	}
 
-	if expected.diskName != diskName {
-		testcase.t.Errorf("Unexpected DiskIsAttached call: expected diskName %s, got %s", expected.diskName, diskName)
-		return false, errors.New("Unexpected DiskIsAttached call: wrong diskName")
+	if expected.deviceName != deviceName {
+		testcase.t.Errorf("Unexpected DiskIsAttached call: expected deviceName %s, got %s", expected.deviceName, deviceName)
+		return false, errors.New("Unexpected DiskIsAttached call: wrong deviceName")
 	}
 
 	if expected.nodeName != nodeName {
@@ -396,12 +429,12 @@ func (testcase *testcase) DiskIsAttached(diskName string, nodeName types.NodeNam
 		return false, errors.New("Unexpected DiskIsAttached call: wrong nodeName")
 	}
 
-	glog.V(4).Infof("DiskIsAttached call: %s, %s, returning %v, %v", diskName, nodeName, expected.isAttached, expected.ret)
+	glog.V(4).Infof("DiskIsAttached call: %s, %s, returning %v, %v", deviceName, nodeName, expected.isAttached, expected.ret)
 
 	return expected.isAttached, expected.ret
 }
 
-func (testcase *testcase) DisksAreAttached(diskNames []string, nodeName types.NodeName) (map[string]bool, error) {
+func (testcase *testcase) DisksAreAttached(deviceNames []string, nodeName types.NodeName) (map[string]bool, error) {
 	return nil, errors.New("Not implemented")
 }
 
@@ -413,16 +446,21 @@ func (testcase *testcase) CreateRegionalDisk(name string, diskType string, repli
 	return errors.New("Not implemented")
 }
 
-func (testcase *testcase) DeleteDisk(diskToDelete string) error {
+func (testcase *testcase) DeleteDisk(diskToDelete string, zone string) error {
 	return errors.New("Not implemented")
 }
 
-func (testcase *testcase) GetAutoLabelsForPD(name string, zone string) (map[string]string, error) {
+func (testcase *testcase) DeleteRegionalDisk(diskToDelete string) error {
+	return errors.New("Not implemented")
+}
+
+func (testcase *testcase) GetAutoLabelsForPD(name string, zone string, regional *bool) (map[string]string, error) {
 	return map[string]string{}, errors.New("Not implemented")
 }
 
 func (testcase *testcase) ResizeDisk(
 	diskName string,
+	zoneSet sets.String,
 	oldSize resource.Quantity,
 	newSize resource.Quantity) (resource.Quantity, error) {
 	return oldSize, errors.New("Not implemented")
