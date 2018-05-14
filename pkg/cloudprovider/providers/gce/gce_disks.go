@@ -467,6 +467,9 @@ type Disks interface {
 	// serialized as JSON into Description field.
 	CreateRegionalDisk(name string, diskType string, replicaZones sets.String, sizeGb int64, tags map[string]string) error
 
+	// TODO (verult)
+	DiskExists(name string, zone string, regional bool) (bool, error)
+
 	// DeleteDisk deletes PD. Zone can be empty, in which case the operation searches through all available zones.
 	DeleteDisk(name string, zone string) error
 
@@ -726,6 +729,18 @@ func (gce *GCECloud) CreateRegionalDisk(
 		return nil
 	}
 	return err
+}
+
+func (gce *GCECloud) DiskExists(name string, zone string, regional bool) (bool, error) {
+	var disk *GCEDisk
+	var err error
+	if regional {
+		disk, err = gce.findRegionalDiskByName(name)
+		return disk != nil, err
+	} else {
+		disk, err = gce.findDiskByName(name, zone)
+	}
+	return disk != nil, err
 }
 
 func getDiskType(diskType string) (string, error) {

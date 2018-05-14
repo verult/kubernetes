@@ -64,6 +64,10 @@ var _ = utils.SIGDescribe("Regional PD", func() {
 			testVolumeProvisioning(c, ns)
 		})
 
+		It("should create pods successfully in the presence of PD name collisions", func() {
+
+		})
+
 		It("should failover to a different zone when all nodes in one zone become unreachable [Slow] [Disruptive]", func() {
 			testZonalFailover(c, ns)
 		})
@@ -126,6 +130,10 @@ func testVolumeProvisioning(c clientset.Interface, ns string) {
 		claim.Spec.StorageClassName = &class.Name
 		testDynamicProvisioning(test, c, claim, class)
 	}
+}
+
+func testDiskNameCollision() {
+
 }
 
 func testZonalFailover(c clientset.Interface, ns string) {

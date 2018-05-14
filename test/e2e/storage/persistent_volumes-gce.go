@@ -27,6 +27,9 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
 	"k8s.io/kubernetes/test/e2e/storage/utils"
+	"fmt"
+	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/kubernetes/pkg/kubelet/apis"
 )
 
 // verifyGCEDiskAttached performs a sanity check to verify the PD attached to the node
@@ -38,12 +41,18 @@ func verifyGCEDiskAttached(diskName string, nodeName types.NodeName) bool {
 	return isAttached
 }
 
-// initializeGCETestSpec creates a PV, PVC, and ClientPod that will run until killed by test or clean up.
-func initializeGCETestSpec(c clientset.Interface, ns string, pvConfig framework.PersistentVolumeConfig, pvcConfig framework.PersistentVolumeClaimConfig, isPrebound bool) (*v1.Pod, *v1.PersistentVolume, *v1.PersistentVolumeClaim) {
+func initializeGCETestPVPVC(c clientset.Interface, ns string, pvConfig framework.PersistentVolumeConfig, pvcConfig framework.PersistentVolumeClaimConfig, isPrebound bool) (*v1.PersistentVolume, *v1.PersistentVolumeClaim) {
 	By("Creating the PV and PVC")
 	pv, pvc, err := framework.CreatePVPVC(c, pvConfig, pvcConfig, ns, isPrebound)
-	Expect(err).NotTo(HaveOccurred())
+	Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("%v", err))
 	framework.ExpectNoError(framework.WaitOnPVandPVC(c, ns, pv, pvc))
+
+	return pv, pvc
+}
+
+// initializeGCETestSpec creates a PV, PVC, and ClientPod that will run until killed by test or clean up.
+func initializeGCETestSpec(c clientset.Interface, ns string, pvConfig framework.PersistentVolumeConfig, pvcConfig framework.PersistentVolumeClaimConfig, isPrebound bool) (*v1.Pod, *v1.PersistentVolume, *v1.PersistentVolumeClaim) {
+	pv, pvc := initializeGCETestPVPVC(c, ns, pvConfig, pvcConfig, isPrebound)
 
 	By("Creating the Client Pod")
 	clientPod, err := framework.CreateClientPod(c, ns, pvc)
@@ -158,5 +167,68 @@ var _ = utils.SIGDescribe("PersistentVolumes GCEPD", func() {
 
 		By("Verifying Persistent Disk detaches")
 		framework.ExpectNoError(waitForPDDetach(diskName, node), "PD ", diskName, " did not detach")
+	})
+
+	It("should successfully clean up a PV when PDs with the same disk name exists in multiple zones", func() {
+		// TODO (verult) BeforeEach isn't strictly necessary.
+		// Pre-provision disks in two different zones
+		// Create PV pointing to one of the disks, with reclaimPolicy Delete
+		// Create PVC
+		// Delete PVC
+		// Wait for PV deletion
+		// Verify with GCE the disk in the correct zone is deleted.
+
+		framework.SkipUnlessMultizone(c)
+
+		zones, err := framework.GetClusterZones(c)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(zones.Len()).To(BeNumerically(">", 1))
+
+		// Create a PD with the same disk name in a different zone
+		for zone := range zones {
+			if zone != pv.Labels[apis.LabelZoneFailureDomain] {
+				_, err = framework.CreatePDWithRetryAndZone(diskName, zone)
+				Expect(err).NotTo(HaveOccurred())
+				defer framework.DeletePDWithRetryAndZone(diskName, zone)
+				break
+			}
+		}
+
+		volLabel[apis.LabelZoneFailureDomain] = zone1
+		selector := metav1.SetAsLabelSelector(volLabel)
+
+		pvConfig := framework.PersistentVolumeConfig{
+			NamePrefix: "gce-",
+			Labels:     volLabel,
+			ReclaimPolicy: v1.PersistentVolumeReclaimDelete,
+			PVSource: v1.PersistentVolumeSource{
+				GCEPersistentDisk: &v1.GCEPersistentDiskVolumeSource{
+					PDName:   diskName,
+					FSType:   "ext3",
+					ReadOnly: false,
+				},
+			},
+			Prebind: nil,
+		}
+		emptyStorageClass := ""
+		pvcConfig := framework.PersistentVolumeClaimConfig{
+			Selector:         selector,
+			StorageClassName: &emptyStorageClass,
+		}
+
+		pv, pvc := initializeGCETestPVPVC(c, ns, pvConfig, pvcConfig, false)
+
+		err = framework.DeletePersistentVolumeClaim(c, pvc.Name, ns)
+		Expect(err).NotTo(HaveOccurred())
+		err = framework.WaitForPersistentVolumeDeleted(c, pv.Name, framework.Poll, framework.PVDeletingTimeout)
+		Expect(err).NotTo(HaveOccurred())
+
+		exists, err := framework.PDExists(diskName, zone1)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(exists).To(BeFalse())
+
+		exists, err = framework.PDExists(diskName, zone2)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(exists).To(BeTrue())
 	})
 })

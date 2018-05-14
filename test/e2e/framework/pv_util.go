@@ -642,10 +642,10 @@ func MakePersistentVolumeClaim(cfg PersistentVolumeClaimConfig, ns string) *v1.P
 	}
 }
 
-func createPDWithRetry(zone string) (string, error) {
+func createPDWithRetry(name, zone string) (string, error) {
 	var err error
 	for start := time.Now(); time.Since(start) < PDRetryTimeout; time.Sleep(PDRetryPollTime) {
-		newDiskName, err := createPD(zone)
+		newDiskName, err := createPD(name, zone)
 		if err != nil {
 			Logf("Couldn't create a new PD, sleeping 5 seconds: %v", err)
 			continue
@@ -657,17 +657,17 @@ func createPDWithRetry(zone string) (string, error) {
 }
 
 func CreatePDWithRetry() (string, error) {
-	return createPDWithRetry("")
+	return createPDWithRetry("" /* name */, "" /* zone */)
 }
 
-func CreatePDWithRetryAndZone(zone string) (string, error) {
-	return createPDWithRetry(zone)
+func CreatePDWithRetryAndZone(name, zone string) (string, error) {
+	return createPDWithRetry(name, zone)
 }
 
-func DeletePDWithRetry(diskName string) error {
+func deletePDWithRetry(diskName, zone string) error {
 	var err error
 	for start := time.Now(); time.Since(start) < PDRetryTimeout; time.Sleep(PDRetryPollTime) {
-		err = deletePD(diskName)
+		err = deletePD(diskName, zone)
 		if err != nil {
 			Logf("Couldn't delete PD %q, sleeping %v: %v", diskName, PDRetryPollTime, err)
 			continue
@@ -676,6 +676,14 @@ func DeletePDWithRetry(diskName string) error {
 		return nil
 	}
 	return fmt.Errorf("unable to delete PD %q: %v", diskName, err)
+}
+
+func DeletePDWithRetry(diskName string) error {
+	return deletePDWithRetry(diskName, "")
+}
+
+func DeletePDWithRetryAndZone(diskName, zone string) error {
+	return deletePDWithRetry(diskName, zone)
 }
 
 func newAWSClient(zone string) *ec2.EC2 {
@@ -694,13 +702,42 @@ func newAWSClient(zone string) *ec2.EC2 {
 	return ec2.New(session.New(), cfg)
 }
 
-func createPD(zone string) (string, error) {
+func PDExists(name, zone string) (bool, error) {
 	if zone == "" {
 		zone = TestContext.CloudConfig.Zone
 	}
 
 	if TestContext.Provider == "gce" || TestContext.Provider == "gke" {
-		pdName := fmt.Sprintf("%s-%s", TestContext.Prefix, string(uuid.NewUUID()))
+		gceCloud, err := GetGCECloud()
+		if err != nil {
+			return false, err
+		}
+
+		if zone == "" && TestContext.CloudConfig.MultiZone {
+			zones, err := gceCloud.GetAllZonesFromCloudProvider()
+			if err != nil {
+				return false, err
+			}
+			zone, _ = zones.PopAny()
+		}
+
+		return gceCloud.DiskExists(name, zone, false /* regional */)
+	}
+
+	return false, fmt.Errorf("provider does not support volume existence check")
+}
+
+// The disk name parameter is only used by gce/gke tests.
+func createPD(name, zone string) (string, error) {
+	if zone == "" {
+		zone = TestContext.CloudConfig.Zone
+	}
+
+	if TestContext.Provider == "gce" || TestContext.Provider == "gke" {
+		pdName := name
+		if name == "" {
+			pdName = fmt.Sprintf("%s-%s", TestContext.Prefix, string(uuid.NewUUID()))
+		}
 
 		gceCloud, err := GetGCECloud()
 		if err != nil {
@@ -755,7 +792,7 @@ func createPD(zone string) (string, error) {
 	}
 }
 
-func deletePD(pdName string) error {
+func deletePD(pdName, zone string) error {
 	if TestContext.Provider == "gce" || TestContext.Provider == "gke" {
 		gceCloud, err := GetGCECloud()
 		if err != nil {
@@ -1067,7 +1104,7 @@ func WaitForPVClaimBoundPhase(client clientset.Interface, pvclaims []*v1.Persist
 }
 
 func CreatePVSource(zone string) (*v1.PersistentVolumeSource, error) {
-	diskName, err := CreatePDWithRetryAndZone(zone)
+	diskName, err := CreatePDWithRetryAndZone("" /* name */, zone)
 	if err != nil {
 		return nil, err
 	}
