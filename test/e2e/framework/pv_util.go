@@ -40,6 +40,7 @@ import (
 	gcecloud "k8s.io/kubernetes/pkg/cloudprovider/providers/gce"
 	"k8s.io/kubernetes/pkg/volume/util"
 	imageutils "k8s.io/kubernetes/test/utils/image"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 const (
@@ -642,10 +643,19 @@ func MakePersistentVolumeClaim(cfg PersistentVolumeClaimConfig, ns string) *v1.P
 	}
 }
 
-func createPDWithRetry(name, zone string) (string, error) {
+func createPDWithRetry(name string, zones sets.String) (string, error) {
 	var err error
 	for start := time.Now(); time.Since(start) < PDRetryTimeout; time.Sleep(PDRetryPollTime) {
-		newDiskName, err := createPD(name, zone)
+		var newDiskName string
+		switch zones.Len() {
+		case 2:
+			newDiskName, err = createRegionalPD(name, zones)
+		case 1:
+			zone, _ := zones.PopAny()
+			newDiskName, err = createPD(name, zone)
+		default:
+			newDiskName, err = createPD(name, "")
+		}
 		if err != nil {
 			Logf("Couldn't create a new PD, sleeping 5 seconds: %v", err)
 			continue
@@ -657,17 +667,27 @@ func createPDWithRetry(name, zone string) (string, error) {
 }
 
 func CreatePDWithRetry() (string, error) {
-	return createPDWithRetry("" /* name */, "" /* zone */)
+	return createPDWithRetry("" /* name */, make(sets.String) /* zone */)
 }
 
 func CreatePDWithRetryAndZone(name, zone string) (string, error) {
-	return createPDWithRetry(name, zone)
+	zones := make(sets.String)
+	zones.Insert(zone)
+	return createPDWithRetry(name, zones, )
 }
 
-func deletePDWithRetry(diskName, zone string) error {
+func CreateRegionalPDWithRetry(name string, zones sets.String) (string, error) {
+	return createPDWithRetry(name, zones)
+}
+
+func deletePDWithRetry(diskName, zone string, regional bool) error {
 	var err error
 	for start := time.Now(); time.Since(start) < PDRetryTimeout; time.Sleep(PDRetryPollTime) {
-		err = deletePD(diskName, zone)
+		if regional {
+			err = deleteRegionalPD(diskName)
+		} else {
+			err = deletePD(diskName, zone)
+		}
 		if err != nil {
 			Logf("Couldn't delete PD %q, sleeping %v: %v", diskName, PDRetryPollTime, err)
 			continue
@@ -679,11 +699,15 @@ func deletePDWithRetry(diskName, zone string) error {
 }
 
 func DeletePDWithRetry(diskName string) error {
-	return deletePDWithRetry(diskName, "")
+	return deletePDWithRetry(diskName, "", false /* regional */)
 }
 
 func DeletePDWithRetryAndZone(diskName, zone string) error {
-	return deletePDWithRetry(diskName, zone)
+	return deletePDWithRetry(diskName, zone, false /* regional */)
+}
+
+func DeleteRegionalPDWithRetry(diskName string) error {
+	return deletePDWithRetry(diskName, "", true /* regional */)
 }
 
 func newAWSClient(zone string) *ec2.EC2 {
@@ -792,6 +816,28 @@ func createPD(name, zone string) (string, error) {
 	}
 }
 
+func createRegionalPD(name string, zones sets.String) (string, error){
+	if TestContext.Provider == "gce" || TestContext.Provider == "gke" {
+		pdName := name
+		if name == "" {
+			pdName = fmt.Sprintf("%s-%s", TestContext.Prefix, string(uuid.NewUUID()))
+		}
+
+		gceCloud, err := GetGCECloud()
+		if err != nil {
+			return "", err
+		}
+
+		tags := map[string]string{}
+		err = gceCloud.CreateRegionalDisk(pdName, gcecloud.DiskTypeSSD, zones, 10 /* sizeGb */ , tags)
+		if err != nil {
+			return "", err
+		}
+		return pdName, nil
+	}
+	return "", fmt.Errorf("provider does not support regional volume creation")
+}
+
 func deletePD(pdName, zone string) error {
 	if TestContext.Provider == "gce" || TestContext.Provider == "gke" {
 		gceCloud, err := GetGCECloud()
@@ -799,7 +845,7 @@ func deletePD(pdName, zone string) error {
 			return err
 		}
 
-		err = gceCloud.DeleteDisk(pdName, "")
+		err = gceCloud.DeleteDisk(pdName, zone)
 
 		if err != nil {
 			if gerr, ok := err.(*googleapi.Error); ok && len(gerr.Errors) > 0 && gerr.Errors[0].Reason == "notFound" {
@@ -840,6 +886,29 @@ func deletePD(pdName, zone string) error {
 	} else {
 		return fmt.Errorf("provider does not support volume deletion")
 	}
+}
+
+func deleteRegionalPD(pdName string) error {
+	if TestContext.Provider == "gce" || TestContext.Provider == "gke" {
+		gceCloud, err := GetGCECloud()
+		if err != nil {
+			return err
+		}
+
+		err = gceCloud.DeleteRegionalDisk(pdName)
+
+		if err != nil {
+			if gerr, ok := err.(*googleapi.Error); ok && len(gerr.Errors) > 0 && gerr.Errors[0].Reason == "notFound" {
+				// PD already exists, ignore error.
+				return nil
+			}
+
+			Logf("error deleting PD %q: %v", pdName, err)
+		}
+		return err
+	}
+
+	return fmt.Errorf("provider does not support regional volume deletion")
 }
 
 // Returns a pod definition based on the namespace. The pod references the PVC's
