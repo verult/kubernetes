@@ -194,7 +194,6 @@ func (attacher *gcePersistentDiskAttacher) GetDeviceMountPath(
 	return makeGlobalPDName(attacher.host, deviceName), nil
 }
 
-// TODO (verult)
 func (attacher *gcePersistentDiskAttacher) MountDevice(spec *volume.Spec, devicePath string, deviceMountPath string) error {
 	// Only mount the PD globally once.
 	mounter := attacher.host.GetMounter(gcePersistentDiskPluginName)
@@ -284,7 +283,6 @@ func (detacher *gcePersistentDiskDetacher) Detach(volumeName string, nodeName ty
 	return nil
 }
 
-// TODO (verult)
 func (detacher *gcePersistentDiskDetacher) UnmountDevice(deviceMountPath string) error {
 	return volumeutil.UnmountPath(deviceMountPath, detacher.host.GetMounter(gcePersistentDiskPluginName))
 }

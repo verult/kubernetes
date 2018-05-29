@@ -58,8 +58,6 @@ const (
 	diskSourceURITemplateRegional   = "%s/regions/%s/disks/%s" //{gce.projectID}/regions/{disk.Region}/disks/repd"
 
 	replicaZoneURITemplateSingleZone = "%s/zones/%s" // {gce.projectID}/zones/{disk.Zone}
-
-	deviceNameRegionalSuffix  = "_regional" // TODO (verult) can this be passed in another way? Why do both gce_disks and gce_util need this param?
 )
 
 type diskServiceManager interface {
@@ -444,16 +442,13 @@ type Disks interface {
 	// Current instance is used when instanceID is empty string.
 	AttachDisk(diskName string, nodeName types.NodeName, deviceName string, readOnly bool, regional bool) error
 
-	// TODO (verult) Shouldn't pass devicePath as param - only cloud provider knows about device path.
 	// DetachDisk detaches given disk to the node with the specified NodeName.
 	// Current instance is used when nodeName is empty string.
 	DetachDisk(deviceName string, nodeName types.NodeName) error
 
-	// TODO (verult) identify by device name
 	// DiskIsAttached checks if a disk is attached to the node with the specified NodeName.
 	DiskIsAttached(deviceName string, nodeName types.NodeName) (bool, error)
 
-	// TODO (verult) identify by device names
 	// DisksAreAttached is a batch function to check if a list of disks are attached
 	// to the node with the specified NodeName.
 	DisksAreAttached(deviceNames []string, nodeName types.NodeName) (map[string]bool, error)
@@ -467,7 +462,7 @@ type Disks interface {
 	// serialized as JSON into Description field.
 	CreateRegionalDisk(name string, diskType string, replicaZones sets.String, sizeGb int64, tags map[string]string) error
 
-	// TODO (verult)
+	// TODO (verult) comment
 	DiskExists(name string, zone string, regional bool) (bool, error)
 
 	// DeleteDisk deletes PD. Zone can be empty, in which case the operation searches through all available zones.
@@ -476,7 +471,6 @@ type Disks interface {
 	// TODO (verult) comment
 	DeleteRegionalDisk(name string) error
 
-	// TODO (verult) Need to identify based on zone as well.
 	// ResizeDisk resizes PD and returns new disk size
 	ResizeDisk(diskToResize string, zoneSet sets.String, oldSize resource.Quantity, newSize resource.Quantity) (resource.Quantity, error)
 
@@ -736,7 +730,6 @@ func (gce *GCECloud) DiskExists(name string, zone string, regional bool) (bool, 
 	var err error
 	if regional {
 		disk, err = gce.findRegionalDiskByName(name)
-		return disk != nil, err
 	} else {
 		disk, err = gce.findDiskByName(name, zone)
 	}
@@ -815,6 +808,8 @@ func (gce *GCECloud) ResizeDisk(diskToResize string, zoneSet sets.String, oldSiz
 		disk, err = gce.findDiskByName(diskToResize, zoneSet.UnsortedList()[0])
 	case 0:
 		disk, err = gce.GetDiskByNameUnknownZone(diskToResize)
+	default:
+		return oldSize, fmt.Errorf("unsupported number of zones")
 	}
 	if err != nil {
 		return oldSize, err
