@@ -41,6 +41,7 @@ import (
 	"k8s.io/kubernetes/pkg/cloudprovider/providers/gce/cloud"
 	"k8s.io/kubernetes/pkg/cloudprovider/providers/gce/cloud/meta"
 	"k8s.io/kubernetes/pkg/features"
+	"k8s.io/apimachinery/pkg/util/errors"
 )
 
 type DiskType string
@@ -474,11 +475,15 @@ type Disks interface {
 	// ResizeDisk resizes PD and returns new disk size
 	ResizeDisk(diskToResize string, zoneSet sets.String, oldSize resource.Quantity, newSize resource.Quantity) (resource.Quantity, error)
 
+	// TODO (verult) Fix comments
 	// GetAutoLabelsForPD returns labels to apply to PersistentVolume
 	// representing this PD, namely failure domain and zone.
 	// zone can be provided to specify the zone for the PD,
 	// if empty all managed zones will be searched.
-	GetAutoLabelsForPD(name string, zone string, regional *bool) (map[string]string, error)
+	GetAutoLabelsForPDByZone(name string, zone string) (map[string]string, error)
+
+	// TODO (verult) comment, improve naming
+	GetAutoLabelsForPD(name string, regional bool) (map[string]string, error)
 }
 
 // GCECloud implements Disks.
@@ -528,7 +533,7 @@ func (gce *GCECloud) GetLabelsForVolume(ctx context.Context, pv *v1.PersistentVo
 	// If the zone is already labeled, honor the hint
 	zone := pv.Labels[kubeletapis.LabelZoneFailureDomain]
 
-	labels, err := gce.GetAutoLabelsForPD(pv.Spec.GCEPersistentDisk.PDName, zone, nil /* regional */)
+	labels, err := gce.GetAutoLabelsForPDByZone(pv.Spec.GCEPersistentDisk.PDName, zone)
 	if err != nil {
 		return nil, err
 	}
@@ -865,18 +870,12 @@ func (gce *GCECloud) ResizeDisk(diskToResize string, zoneSet sets.String, oldSiz
 // The PersistentVolumeLabel admission controller calls this and adds the labels when a PV is created.
 // If zone is specified, the volume will only be found in the specified zone,
 // otherwise all managed zones will be searched.
-func (gce *GCECloud) GetAutoLabelsForPD(name string, zone string, regional *bool) (map[string]string, error) {
-	// If regional == true (zone == ""), only scan for regional disk
-	// If regional == false (zone == ""), only scan for regular disk
-
-	// If regional == nil && zone == "", scan for both regional and regular disks.
-	// If regional == nil && zone != "", scan for regional disk or regular disk depending on zone
-
+func (gce *GCECloud) GetAutoLabelsForPDByZone(name string, zone string) (map[string]string, error) {
 	var disk *GCEDisk
-	var err error
+	var diskErr error
 
-	if regional == nil && zone == "" {
-		// get regional disk and scan regular disks
+	if zone == "" {
+		// Check for both regional and zonal disks
 
 		// For regional PDs this is fine, but for zonal PDs we would like as far
 		// as possible to avoid this case, because GCE doesn't guarantee that
@@ -886,47 +885,49 @@ func (gce *GCECloud) GetAutoLabelsForPD(name string, zone string, regional *bool
 		// However, wherever possible the zone should be passed (and it is
 		// passed for most cases that we can control, e.g. dynamic volume
 		// provisioning).
-		disk, err = gce.GetDiskByNameUnknownZone(name)
-		if err != nil && err != cloudprovider.DiskNotFound {
-			return nil, err
+		disk, diskErr = gce.GetDiskByNameUnknownZone(name)
+		if diskErr != nil && diskErr != cloudprovider.DiskNotFound {
+			return nil, diskErr
 		}
 
-		// TODO (verult) is flag gate necessary?
-		if utilfeature.DefaultFeatureGate.Enabled(features.GCERegionalPersistentDisk) {
-			regionalDisk, err := gce.getRegionalDiskByName(name)
+		regionalDisk, regionalDiskErr := gce.getRegionalDiskByName(name)
 
-			if disk != nil && regionalDisk != nil {
-				return nil, fmt.Errorf("Both regional and regular PDs were found with name %q", name)
-			} else if disk == nil && regionalDisk == nil {
-				return nil, err
-			} else if disk == nil && regionalDisk != nil {
-				disk = regionalDisk
-			} // else disk != nil && regionalDisk == nil, use the previously found regular disk.
-		}
+		if disk != nil && regionalDisk != nil {
+			return nil, fmt.Errorf("Both regional and regular PDs were found with name %q", name)
+		} else if disk == nil && regionalDisk == nil {
+			return nil, errors.NewAggregate([]error {diskErr, regionalDiskErr})
+		} else if disk == nil && regionalDisk != nil {
+			disk, diskErr = regionalDisk, regionalDiskErr
+		} // else disk != nil && regionalDisk == nil, use the previously found regular disk.
 
-	} else if regional == nil && zone != "" {
-		// get either regional disk or regular disk depending on zone count
-
+	} else { // We have the zone info to identify the disk
 		zoneSet, zoneErr := volumeutil.LabelZonesToSet(zone)
 		if zoneErr != nil {
 			glog.Warningf("Failed to parse zone field: %q. Will use raw field.", zone)
 		}
 
 		if len(zoneSet) > 1 {
-			disk, err = gce.getRegionalDiskByName(name)
+			disk, diskErr = gce.getRegionalDiskByName(name)
 		} else { // len(zoneSet) == 1
-			disk, err = gce.getDiskByName(name, zone)
+			disk, diskErr = gce.getDiskByName(name, zone)
 		}
+	}
 
-	} else if *regional && zone == "" {
-		// get regional disk
+	if diskErr != nil {
+		return nil, diskErr
+	}
+
+	return getLabelsFromDisk(disk)
+}
+
+func (gce *GCECloud) GetAutoLabelsForPD(name string, regional bool) (map[string]string, error) {
+	var disk *GCEDisk
+	var err error
+
+	if regional {
 		disk, err = gce.getRegionalDiskByName(name)
-	} else if *regional && zone != "" {
-		// Programming error
-		return nil, fmt.Errorf("zone and regional hints can't both be specified.")
-	} else if !*regional && zone == "" {
-		// scan for regular disk
-
+	} else {
+		// TODO (verult) clean up this comment, is it still necessary?
 		// For zonal PDs we would like as far
 		// as possible to avoid this case, because GCE doesn't guarantee that
 		// volumes are uniquely named per region, just per zone. However,
@@ -936,15 +937,16 @@ func (gce *GCECloud) GetAutoLabelsForPD(name string, zone string, regional *bool
 		// passed for most cases that we can control, e.g. dynamic volume
 		// provisioning).
 		disk, err = gce.GetDiskByNameUnknownZone(name)
-	} else { // !*regional && zone != ""
-		// Programming error
-		return nil, fmt.Errorf("zone and regional hints can't both be specified.")
 	}
 
 	if err != nil {
 		return nil, err
 	}
 
+	return getLabelsFromDisk(disk)
+}
+
+func getLabelsFromDisk(disk *GCEDisk) (map[string]string, error) {
 	labels := make(map[string]string)
 	switch zoneInfo := disk.ZoneInfo.(type) {
 	case singleZone:
@@ -960,7 +962,7 @@ func (gce *GCECloud) GetAutoLabelsForPD(name string, zone string, regional *bool
 			return nil, fmt.Errorf("PD is regional but does not have any replicaZones specified: %v", disk)
 		}
 		labels[kubeletapis.LabelZoneFailureDomain] =
-			volumeutil.ZonesSetToLabelValue(zoneInfo.replicaZones)
+				volumeutil.ZonesSetToLabelValue(zoneInfo.replicaZones)
 		labels[kubeletapis.LabelZoneRegion] = disk.Region
 	case nil:
 		// Unexpected, but sanity-check
