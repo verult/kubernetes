@@ -745,7 +745,7 @@ func PDExists(name, zone string) (bool, error) {
 			zone, _ = zones.PopAny()
 		}
 
-		return gceCloud.DiskExists(name, zone, false /* regional */)
+		return gceCloud.DiskExists(name, zone)
 	}
 
 	return false, fmt.Errorf("provider does not support volume existence check")

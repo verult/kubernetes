@@ -803,8 +803,57 @@ func TestGetAutoLabelsForPD_ZonalRegionalGetRegional(t *testing.T) {
 	}
 }
 
-func TestDiskExists
+func TestDiskExists_Positive(t *testing.T) {
+	// Arrange
+	gce, test := initLabelTests()
+	gce.CreateDisk(test.diskName, test.diskType, test.zone, test.sizeGb, nil)
 
+	// Act
+	exists, err := gce.DiskExists(test.diskName, test.zone)
+
+	// Assert
+	if err != nil {
+		t.Error(err)
+	}
+	if !exists {
+		t.Error("Expected disk to exist, but it does not.")
+	}
+}
+
+func TestDiskExists_Negative(t *testing.T) {
+	// Arrange
+	gce, test := initLabelTests()
+
+	// Act
+	exists, err := gce.DiskExists(test.diskName, test.zone)
+
+	// Assert
+	if err != nil {
+		t.Error(err)
+	}
+	if exists {
+		t.Error("Expected disk to not exist, but it does.")
+	}
+}
+
+func TestDiskExists_WrongZone(t *testing.T) {
+	// Arrange
+	gce, test := initLabelTests()
+	gce.CreateDisk(test.diskName, test.diskType, test.zone, test.sizeGb, nil)
+
+	// Act
+	exists, err := gce.DiskExists(test.diskName, "some-zone")
+
+	// Assert
+	if err != nil {
+		t.Error(err)
+	}
+	if exists {
+		t.Error("Expected disk to not exist, but it does.")
+	}
+}
+
+// TODO (verult) rename - it's no longer only used for label tests
 // labelTestCase contains a list of attributes used by tests for GetAutoLabelsForPD functions.
 type labelTestCase struct {
 	gceRegion string
@@ -816,6 +865,7 @@ type labelTestCase struct {
 	replicaZonesLabel string // for regional disks
 }
 
+// TODO (verult) rename - it's no longer only used for label tests
 // initLabelTests generates the GCE cloud client and a set of disk parameters for testing
 // GetAutoLabelsForPD functions.
 func initLabelTests() (GCECloud, *labelTestCase) {
