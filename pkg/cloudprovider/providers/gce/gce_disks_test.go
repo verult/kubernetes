@@ -436,250 +436,13 @@ func TestDeleteDisk_ZonalRegional(t *testing.T) {
 	}
 }
 
-func TestGetAutoLabelsForPDByZone_Basic(t *testing.T) {
-	/* Arrange */
-	gce, _, test := initLabelTests()
-	gce.CreateDisk(test.diskName, test.diskType, test.zone, test.sizeGb, nil)
-
-	/* Act */
-	labels, err := gce.GetAutoLabelsForPDByZone(test.diskName, test.zone)
-
-	/* Assert */
-	if err != nil {
-		t.Error(err)
-	}
-	if labels[kubeletapis.LabelZoneFailureDomain] != test.zone {
-		t.Errorf("Failure domain is '%v', but zone is '%v'",
-			labels[kubeletapis.LabelZoneFailureDomain], test.zone)
-	}
-	if labels[kubeletapis.LabelZoneRegion] != test.gceRegion {
-		t.Errorf("Region is '%v', but region is 'us-central1'", labels[kubeletapis.LabelZoneRegion])
-	}
-}
-
-func TestGetAutoLabelsForPDByZone_BasicRegional(t *testing.T) {
-	/* Arrange */
-	gce, _, test := initLabelTests()
-	gce.CreateRegionalDisk(test.diskName, test.diskType, test.replicaZones, test.sizeGb, nil)
-
-	/* Act */
-	labels, err := gce.GetAutoLabelsForPDByZone(test.diskName, test.replicaZonesLabel)
-
-	/* Assert */
-	if err != nil {
-		t.Error(err)
-	}
-
-	zoneSet, err := util.LabelZonesToSet(labels[kubeletapis.LabelZoneFailureDomain])
-	if err != nil {
-		t.Errorf("Expected no error but an error is returned: %v", err)
-	}
-	if !zoneSet.Equal(test.replicaZones) {
-		t.Errorf("Failure domain is '%v', but zone is '%v'",
-			labels[kubeletapis.LabelZoneFailureDomain], test.replicaZonesLabel)
-	}
-	if labels[kubeletapis.LabelZoneRegion] != test.gceRegion {
-		t.Errorf("Region is '%v', but region is 'us-central1'", labels[kubeletapis.LabelZoneRegion])
-	}
-}
-
-func TestGetAutoLabelsForPDByZone_NoZone(t *testing.T) {
-	/* Arrange */
-	gce, _, test := initLabelTests()
-	gce.CreateDisk(test.diskName, test.diskType, test.zone, test.sizeGb, nil)
-
-	/* Act */
-	labels, err := gce.GetAutoLabelsForPDByZone(test.diskName, "")
-
-	/* Assert */
-	if err != nil {
-		t.Error(err)
-	}
-	if labels[kubeletapis.LabelZoneFailureDomain] != test.zone {
-		t.Errorf("Failure domain is '%v', but zone is '%v'",
-			labels[kubeletapis.LabelZoneFailureDomain], test.zone)
-	}
-	if labels[kubeletapis.LabelZoneRegion] != test.gceRegion {
-		t.Errorf("Region is '%v', but region is 'europe-west1'", labels[kubeletapis.LabelZoneRegion])
-	}
-}
-
-func TestGetAutoLabelsForPDByZone_NoZoneRegional(t *testing.T) {
-	/* Arrange */
-	gce, _, test := initLabelTests()
-	gce.CreateRegionalDisk(test.diskName, test.diskType, test.replicaZones, test.sizeGb, nil)
-
-	/* Act */
-	labels, err := gce.GetAutoLabelsForPDByZone(test.diskName, "")
-
-	/* Assert */
-	if err != nil {
-		t.Error(err)
-	}
-
-	zoneSet, err := util.LabelZonesToSet(labels[kubeletapis.LabelZoneFailureDomain])
-	if err != nil {
-		t.Errorf("Expected no error but an error is returned: %v", err)
-	}
-	if !zoneSet.Equal(test.replicaZones) {
-		t.Errorf("Failure domain is '%v', but zone is '%v'",
-			labels[kubeletapis.LabelZoneFailureDomain], test.replicaZonesLabel)
-	}
-	if labels[kubeletapis.LabelZoneRegion] != test.gceRegion {
-		t.Errorf("Region is '%v', but region is 'europe-west1'", labels[kubeletapis.LabelZoneRegion])
-	}
-}
-
-func TestGetAutoLabelsForPDByZone_DiskNotFound(t *testing.T) {
-	/* Arrange */
-	gce, _, test := initLabelTests()
-
-	/* Act */
-
-	_, err := gce.GetAutoLabelsForPDByZone(test.diskName, test.zone)
-
-	/* Assert */
-	if err == nil {
-		t.Error("Expected error when the specified disk does not exist, but none returned.")
-	}
-}
-
-func TestGetAutoLabelsForPDByZone_DiskNotFoundRegional(t *testing.T) {
-	/* Arrange */
-	gce, _, test := initLabelTests()
-
-	/* Act */
-	_, err := gce.GetAutoLabelsForPDByZone(test.diskName, test.replicaZonesLabel)
-
-	/* Assert */
-	if err == nil {
-		t.Error("Expected error when the specified disk does not exist, but none returned.")
-	}
-}
-
-func TestGetAutoLabelsForPDByZone_DiskNotFoundAndNoZone(t *testing.T) {
-	/* Arrange */
-	gce, _, test := initLabelTests()
-
-	/* Act */
-	_, err := gce.GetAutoLabelsForPDByZone(test.diskName, "")
-
-	/* Assert */
-	if err == nil {
-		t.Error("Expected error when the specified disk does not exist, but none returned.")
-	}
-}
-
-func TestGetAutoLabelsForPDByZone_DupDisk(t *testing.T) {
-	/* Arrange */
-	gce, _, test := initLabelTests()
-	for _, zone := range gce.managedZones {
-		gce.CreateDisk(test.diskName, test.diskType, zone, test.sizeGb, nil)
-	}
-
-	/* Act */
-	labels, err := gce.GetAutoLabelsForPDByZone(test.diskName, test.zone)
-
-	/* Assert */
-	if err != nil {
-		t.Errorf("Disk name and zone uniquely identifies a disk, yet an error is returned: %v", err)
-	}
-	if labels[kubeletapis.LabelZoneFailureDomain] != test.zone {
-		t.Errorf("Failure domain is '%v', but zone is '%v'",
-			labels[kubeletapis.LabelZoneFailureDomain], test.zone)
-	}
-	if labels[kubeletapis.LabelZoneRegion] != test.gceRegion {
-		t.Errorf("Region is '%v', but region is 'us-west1'", labels[kubeletapis.LabelZoneRegion])
-	}
-}
-
-func TestGetAutoLabelsForPDByZone_DupDiskNoZone(t *testing.T) {
-	/* Arrange */
-	gce, _, test := initLabelTests()
-	for _, zone := range gce.managedZones {
-		gce.CreateDisk(test.diskName, test.diskType, zone, test.sizeGb, nil)
-	}
-
-	/* Act */
-	_, err := gce.GetAutoLabelsForPDByZone(test.diskName, "")
-
-	/* Assert */
-	if err == nil {
-		t.Error("Expected error when the disk is duplicated and zone is not specified, but none returned.")
-	}
-}
-
-func TestGetAutoLabelsForPDByZone_ZonalRegionalGetZonal(t *testing.T) {
-	/* Arrange */
-	gce, _, test := initLabelTests()
-	gce.CreateDisk(test.diskName, test.diskType, test.zone, test.sizeGb, nil)
-	gce.CreateRegionalDisk(test.diskName, test.diskType, test.replicaZones, test.sizeGb, nil)
-
-	/* Act */
-	labels, err := gce.GetAutoLabelsForPDByZone(test.diskName, test.zone)
-
-	/* Assert */
-	if err != nil {
-		t.Errorf("Disk name and zone uniquely identifies a disk, yet an error is returned: %v", err)
-	}
-	if labels[kubeletapis.LabelZoneFailureDomain] != test.zone {
-		t.Errorf("Failure domain is '%v', but zone is '%v'",
-			labels[kubeletapis.LabelZoneFailureDomain], test.zone)
-	}
-	if labels[kubeletapis.LabelZoneRegion] != test.gceRegion {
-		t.Errorf("Region is '%v', but region is 'us-west1'", labels[kubeletapis.LabelZoneRegion])
-	}
-}
-
-func TestGetAutoLabelsForPDByZone_ZonalRegionalGetRegional(t *testing.T) {
-	/* Arrange */
-	gce, _, test := initLabelTests()
-	gce.CreateDisk(test.diskName, test.diskType, test.zone, test.sizeGb, nil)
-	gce.CreateRegionalDisk(test.diskName, test.diskType, test.replicaZones, test.sizeGb, nil)
-
-	/* Act */
-	labels, err := gce.GetAutoLabelsForPDByZone(test.diskName, test.replicaZonesLabel)
-
-	/* Assert */
-	if err != nil {
-		t.Errorf("Disk name and zone label uniquely identifies a disk, yet an error is returned: %v", err)
-	}
-
-	zoneSet, err := util.LabelZonesToSet(labels[kubeletapis.LabelZoneFailureDomain])
-	if err != nil {
-		t.Errorf("Expected no error but an error is returned: %v", err)
-	}
-	if !zoneSet.Equal(test.replicaZones) {
-		t.Errorf("Failure domain is '%v', but zone is '%v'",
-			labels[kubeletapis.LabelZoneFailureDomain], test.replicaZonesLabel)
-	}
-	if labels[kubeletapis.LabelZoneRegion] != test.gceRegion {
-		t.Errorf("Region is '%v', but region is 'us-west1'", labels[kubeletapis.LabelZoneRegion])
-	}
-}
-
-func TestGetAutoLabelsForPDByZone_ZonalRegionalNoZone(t *testing.T) {
-	/* Arrange */
-	gce, _, test := initLabelTests()
-	gce.CreateDisk(test.diskName, test.diskType, test.zone, test.sizeGb, nil)
-	gce.CreateRegionalDisk(test.diskName, test.diskType, test.replicaZones, test.sizeGb, nil)
-
-	/* Act */
-	_, err := gce.GetAutoLabelsForPDByZone(test.diskName, "")
-
-	/* Assert */
-	if err == nil {
-		t.Error("Expected error when there is a naming collision between zonal and regional disks, but none returned.")
-	}
-}
-
 func TestGetAutoLabelsForPD_Basic(t *testing.T) {
 	/* Arrange */
 	gce, _, test := initLabelTests()
 	gce.CreateDisk(test.diskName, test.diskType, test.zone, test.sizeGb, nil)
 
 	/* Act */
-	labels, err := gce.GetAutoLabelsForPD(test.diskName, false /* regional */)
+	labels, err := gce.GetAutoLabelsForPD(test.diskName, test.zone)
 
 	/* Assert */
 	if err != nil {
@@ -700,7 +463,7 @@ func TestGetAutoLabelsForPD_BasicRegional(t *testing.T) {
 	gce.CreateRegionalDisk(test.diskName, test.diskType, test.replicaZones, test.sizeGb, nil)
 
 	/* Act */
-	labels, err := gce.GetAutoLabelsForPD(test.diskName, true /* regional */)
+	labels, err := gce.GetAutoLabelsForPD(test.diskName, test.replicaZonesLabel)
 
 	/* Assert */
 	if err != nil {
@@ -720,12 +483,60 @@ func TestGetAutoLabelsForPD_BasicRegional(t *testing.T) {
 	}
 }
 
+func TestGetAutoLabelsForPD_NoZone(t *testing.T) {
+	/* Arrange */
+	gce, _, test := initLabelTests()
+	gce.CreateDisk(test.diskName, test.diskType, test.zone, test.sizeGb, nil)
+
+	/* Act */
+	labels, err := gce.GetAutoLabelsForPD(test.diskName, "")
+
+	/* Assert */
+	if err != nil {
+		t.Error(err)
+	}
+	if labels[kubeletapis.LabelZoneFailureDomain] != test.zone {
+		t.Errorf("Failure domain is '%v', but zone is '%v'",
+			labels[kubeletapis.LabelZoneFailureDomain], test.zone)
+	}
+	if labels[kubeletapis.LabelZoneRegion] != test.gceRegion {
+		t.Errorf("Region is '%v', but region is 'europe-west1'", labels[kubeletapis.LabelZoneRegion])
+	}
+}
+
+func TestGetAutoLabelsForPD_NoZoneRegional(t *testing.T) {
+	/* Arrange */
+	gce, _, test := initLabelTests()
+	gce.CreateRegionalDisk(test.diskName, test.diskType, test.replicaZones, test.sizeGb, nil)
+
+	/* Act */
+	labels, err := gce.GetAutoLabelsForPD(test.diskName, "")
+
+	/* Assert */
+	if err != nil {
+		t.Error(err)
+	}
+
+	zoneSet, err := util.LabelZonesToSet(labels[kubeletapis.LabelZoneFailureDomain])
+	if err != nil {
+		t.Errorf("Expected no error but an error is returned: %v", err)
+	}
+	if !zoneSet.Equal(test.replicaZones) {
+		t.Errorf("Failure domain is '%v', but zone is '%v'",
+			labels[kubeletapis.LabelZoneFailureDomain], test.replicaZonesLabel)
+	}
+	if labels[kubeletapis.LabelZoneRegion] != test.gceRegion {
+		t.Errorf("Region is '%v', but region is 'europe-west1'", labels[kubeletapis.LabelZoneRegion])
+	}
+}
+
 func TestGetAutoLabelsForPD_DiskNotFound(t *testing.T) {
 	/* Arrange */
 	gce, _, test := initLabelTests()
 
 	/* Act */
-	_, err := gce.GetAutoLabelsForPD(test.diskName, false /* regional */)
+
+	_, err := gce.GetAutoLabelsForPD(test.diskName, test.zone)
 
 	/* Assert */
 	if err == nil {
@@ -738,7 +549,20 @@ func TestGetAutoLabelsForPD_DiskNotFoundRegional(t *testing.T) {
 	gce, _, test := initLabelTests()
 
 	/* Act */
-	_, err := gce.GetAutoLabelsForPD(test.diskName, true /* regional */)
+	_, err := gce.GetAutoLabelsForPD(test.diskName, test.replicaZonesLabel)
+
+	/* Assert */
+	if err == nil {
+		t.Error("Expected error when the specified disk does not exist, but none returned.")
+	}
+}
+
+func TestGetAutoLabelsForPD_DiskNotFoundNoZone(t *testing.T) {
+	/* Arrange */
+	gce, _, test := initLabelTests()
+
+	/* Act */
+	_, err := gce.GetAutoLabelsForPD(test.diskName, "")
 
 	/* Assert */
 	if err == nil {
@@ -749,17 +573,39 @@ func TestGetAutoLabelsForPD_DiskNotFoundRegional(t *testing.T) {
 func TestGetAutoLabelsForPD_DupDisk(t *testing.T) {
 	/* Arrange */
 	gce, _, test := initLabelTests()
-
 	for _, zone := range gce.managedZones {
 		gce.CreateDisk(test.diskName, test.diskType, zone, test.sizeGb, nil)
 	}
 
 	/* Act */
-	_, err := gce.GetAutoLabelsForPD(test.diskName, false /* regional */)
+	labels, err := gce.GetAutoLabelsForPD(test.diskName, test.zone)
+
+	/* Assert */
+	if err != nil {
+		t.Errorf("Disk name and zone uniquely identifies a disk, yet an error is returned: %v", err)
+	}
+	if labels[kubeletapis.LabelZoneFailureDomain] != test.zone {
+		t.Errorf("Failure domain is '%v', but zone is '%v'",
+			labels[kubeletapis.LabelZoneFailureDomain], test.zone)
+	}
+	if labels[kubeletapis.LabelZoneRegion] != test.gceRegion {
+		t.Errorf("Region is '%v', but region is 'us-west1'", labels[kubeletapis.LabelZoneRegion])
+	}
+}
+
+func TestGetAutoLabelsForPD_DupDiskNoZone(t *testing.T) {
+	/* Arrange */
+	gce, _, test := initLabelTests()
+	for _, zone := range gce.managedZones {
+		gce.CreateDisk(test.diskName, test.diskType, zone, test.sizeGb, nil)
+	}
+
+	/* Act */
+	_, err := gce.GetAutoLabelsForPD(test.diskName, "")
 
 	/* Assert */
 	if err == nil {
-		t.Error("Expected error when multiple zonal disks with the same name exist, but none returned.")
+		t.Error("Expected error when the disk is duplicated and zone is not specified, but none returned.")
 	}
 }
 
@@ -770,7 +616,7 @@ func TestGetAutoLabelsForPD_ZonalRegionalGetZonal(t *testing.T) {
 	gce.CreateRegionalDisk(test.diskName, test.diskType, test.replicaZones, test.sizeGb, nil)
 
 	/* Act */
-	labels, err := gce.GetAutoLabelsForPD(test.diskName, false /* regional */)
+	labels, err := gce.GetAutoLabelsForPD(test.diskName, test.zone)
 
 	/* Assert */
 	if err != nil {
@@ -792,11 +638,11 @@ func TestGetAutoLabelsForPD_ZonalRegionalGetRegional(t *testing.T) {
 	gce.CreateRegionalDisk(test.diskName, test.diskType, test.replicaZones, test.sizeGb, nil)
 
 	/* Act */
-	labels, err := gce.GetAutoLabelsForPD(test.diskName, true /* regional */)
+	labels, err := gce.GetAutoLabelsForPD(test.diskName, test.replicaZonesLabel)
 
 	/* Assert */
 	if err != nil {
-		t.Errorf("Disk name and zone uniquely identifies a disk, yet an error is returned: %v", err)
+		t.Errorf("Disk name and zone label uniquely identifies a disk, yet an error is returned: %v", err)
 	}
 
 	zoneSet, err := util.LabelZonesToSet(labels[kubeletapis.LabelZoneFailureDomain])
@@ -809,6 +655,21 @@ func TestGetAutoLabelsForPD_ZonalRegionalGetRegional(t *testing.T) {
 	}
 	if labels[kubeletapis.LabelZoneRegion] != test.gceRegion {
 		t.Errorf("Region is '%v', but region is 'us-west1'", labels[kubeletapis.LabelZoneRegion])
+	}
+}
+
+func TestGetAutoLabelsForPD_ZonalRegionalNoZone(t *testing.T) {
+	/* Arrange */
+	gce, _, test := initLabelTests()
+	gce.CreateDisk(test.diskName, test.diskType, test.zone, test.sizeGb, nil)
+	gce.CreateRegionalDisk(test.diskName, test.diskType, test.replicaZones, test.sizeGb, nil)
+
+	/* Act */
+	_, err := gce.GetAutoLabelsForPD(test.diskName, "")
+
+	/* Assert */
+	if err == nil {
+		t.Error("Expected error when there is a naming collision between zonal and regional disks, but none returned.")
 	}
 }
 

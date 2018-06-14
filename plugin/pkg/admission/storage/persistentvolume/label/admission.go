@@ -188,7 +188,7 @@ func (l *persistentVolumeLabel) findGCEPDLabels(volume *api.PersistentVolume) (m
 	// If the zone is already labeled, honor the hint
 	zone := volume.Labels[kubeletapis.LabelZoneFailureDomain]
 
-	labels, err := provider.GetAutoLabelsForPDByZone(volume.Spec.GCEPersistentDisk.PDName, zone)
+	labels, err := provider.GetAutoLabelsForPD(volume.Spec.GCEPersistentDisk.PDName, zone)
 	if err != nil {
 		return nil, err
 	}

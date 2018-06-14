@@ -152,9 +152,10 @@ func (gceutil *GCEDiskUtil) CreateVolume(c *gcePersistentDiskProvisioner) (strin
 		return "", 0, nil, "", fmt.Errorf("claim.Spec.Selector is not supported for dynamic provisioning on GCE")
 	}
 
+	var zoneStr string
 	switch replicationType {
 	case replicationTypeRegionalPD:
-		err = createRegionalPD(
+		replicaZones, err := createRegionalPD(
 			name,
 			c.options.PVC.Name,
 			diskType,
@@ -166,6 +167,8 @@ func (gceutil *GCEDiskUtil) CreateVolume(c *gcePersistentDiskProvisioner) (strin
 			glog.V(2).Infof("Error creating regional GCE PD volume: %v", err)
 			return "", 0, nil, "", err
 		}
+
+		zoneStr = volumeutil.ZonesSetToLabelValue(replicaZones)
 
 		glog.V(2).Infof("Successfully created Regional GCE PD volume %s", name)
 
@@ -195,12 +198,12 @@ func (gceutil *GCEDiskUtil) CreateVolume(c *gcePersistentDiskProvisioner) (strin
 			zones = make(sets.String)
 			zones.Insert(configuredZone)
 		}
-		zone := volumeutil.ChooseZoneForVolume(zones, c.options.PVC.Name)
+		zoneStr = volumeutil.ChooseZoneForVolume(zones, c.options.PVC.Name)
 
 		if err := cloud.CreateDisk(
 			name,
 			diskType,
-			zone,
+			zoneStr,
 			int64(requestGB),
 			*c.options.CloudTags); err != nil {
 			glog.V(2).Infof("Error creating single-zone GCE PD volume: %v", err)
@@ -213,8 +216,7 @@ func (gceutil *GCEDiskUtil) CreateVolume(c *gcePersistentDiskProvisioner) (strin
 		return "", 0, nil, "", fmt.Errorf("replication-type of '%s' is not supported", replicationType)
 	}
 
-	isRegional := replicationType == replicationTypeRegionalPD
-	labels, err := cloud.GetAutoLabelsForPD(name, isRegional)
+	labels, err := cloud.GetAutoLabelsForPD(name, zoneStr)
 	if err != nil {
 		// We don't really want to leak the volume here...
 		glog.Errorf("error getting labels for volume %q: %v", name, err)
@@ -223,7 +225,7 @@ func (gceutil *GCEDiskUtil) CreateVolume(c *gcePersistentDiskProvisioner) (strin
 	return name, int(requestGB), labels, fstype, nil
 }
 
-// Creates a Regional PD
+// Creates a Regional PD, and returns the chosen replica zones.
 func createRegionalPD(
 	diskName string,
 	pvcName string,
@@ -231,7 +233,7 @@ func createRegionalPD(
 	zonesString string,
 	requestGB int64,
 	cloudTags *map[string]string,
-	cloud *gcecloud.GCECloud) error {
+	cloud *gcecloud.GCECloud) (sets.String, error) {
 
 	var replicaZones sets.String
 	var err error
@@ -241,19 +243,19 @@ func createRegionalPD(
 		replicaZones, err = cloud.GetAllCurrentZones()
 		if err != nil {
 			glog.V(2).Infof("error getting zone information from GCE: %v", err)
-			return err
+			return nil, err
 		}
 	} else {
 		replicaZones, err = volumeutil.ZonesToSet(zonesString)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	zoneCount := replicaZones.Len()
 	var selectedReplicaZones sets.String
 	if zoneCount < maxRegionalPDZones {
-		return fmt.Errorf("cannot specify only %d zone(s) for Regional PDs.", zoneCount)
+		return nil, fmt.Errorf("cannot specify only %d zone(s) for Regional PDs.", zoneCount)
 	} else if zoneCount == maxRegionalPDZones {
 		selectedReplicaZones = replicaZones
 	} else {
@@ -268,10 +270,10 @@ func createRegionalPD(
 		selectedReplicaZones,
 		int64(requestGB),
 		*cloudTags); err != nil {
-		return err
+		return nil, err
 	}
 
-	return nil
+	return replicaZones, nil
 }
 
 // Returns the first path that exists, or empty string if none exist.
