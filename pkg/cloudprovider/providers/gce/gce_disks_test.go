@@ -991,7 +991,7 @@ func (manager *FakeServiceManager) DeleteDiskOnCloudProvider(
 	manager.deleteDiskCalled = true
 
 	if manager.zonalDisks[zone] != disk {
-		return &googleapi.Error{Code: http.StatusNotFound }
+		return &googleapi.Error{ Code: http.StatusNotFound }
 	}
 
 	delete(manager.zonalDisks, zone)
@@ -1014,7 +1014,7 @@ func (manager *FakeServiceManager) DeleteRegionalDiskOnCloudProvider(
 	manager.deleteDiskCalled = true
 
 	if _, ok := manager.regionalDisks[disk]; !ok {
-		return &googleapi.Error{Code: http.StatusNotFound }
+		return &googleapi.Error{ Code: http.StatusNotFound }
 	}
 
 	delete(manager.regionalDisks, disk)

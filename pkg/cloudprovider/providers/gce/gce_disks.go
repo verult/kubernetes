@@ -514,6 +514,24 @@ type singleZone struct {
 func (m multiZone) isZoneType()  {}
 func (s singleZone) isZoneType() {}
 
+type DiskNotFoundError struct {
+	regional bool
+	diskName string
+	diskZone string // for zonal disks only
+}
+
+func (err *DiskNotFoundError) Error() string {
+	if err.regional {
+		if err.diskZone == "" {
+			return fmt.Sprintf("GCE persistent disk not found in any zone: diskName=%q", err.diskName)
+		} else {
+			return fmt.Sprintf("GCE persistent disk not found: diskName=%q zone=%q", err.diskName, err.diskZone)
+		}
+	} else {
+		return fmt.Sprintf("GCE regional persistent disk not found: diskName=%q", err.diskName)
+	}
+}
+
 func newDiskMetricContextZonal(request, region, zone string) *metricContext {
 	return newGenericMetricContext("disk", request, region, zone, computeV1Version)
 }
@@ -746,16 +764,16 @@ func getDiskType(diskType string) (string, error) {
 	}
 }
 
-// TODO (verult) verify with unit tests
 func (gce *GCECloud) DeleteDisk(name string, zone string) error {
 	if zone == "" {
 		// This should never happen because this function is only called for PV deletion,
 		// and PV always has zone information. But this is left here just in case.
 		disk, err := gce.GetDiskByNameUnknownZone(name)
 
-		if err == cloudprovider.DiskNotFound {
+		if _, ok := err.(*DiskNotFoundError); ok {
 			return nil
-		} else if err != nil {
+		}
+		if err != nil {
 			return err
 		}
 
@@ -769,34 +787,26 @@ func (gce *GCECloud) DeleteDisk(name string, zone string) error {
 		}
 	}
 
-	mc := newDiskMetricContextZonal("delete", gce.region, zone)
-	err := gce.manager.DeleteDiskOnCloudProvider(zone, name)
-	mc.Observe(err)
+	err := gce.deleteDiskByName(name, zone)
 
 	if isGCEError(err, "resourceInUseByAnotherResource") {
 		return volume.NewDeletedVolumeInUseError(err.Error())
 	}
 
-	// TODO (verult) Need to convert HTTP status code to DiskNotFound error
-	if err == cloudprovider.DiskNotFound {
+	if _, ok := err.(*DiskNotFoundError); ok {
 		return nil
 	}
 	return err
 }
 
 func (gce *GCECloud) DeleteRegionalDisk(name string) error {
-	mc := newDiskMetricContextRegional("delete", gce.region)
-	err := gce.manager.DeleteRegionalDiskOnCloudProvider(name)
-	if err != nil {
-		return mc.Observe(err)
-	}
+	err := gce.deleteRegionalDiskByName(name)
 
 	if isGCEError(err, "resourceInUseByAnotherResource") {
 		return volume.NewDeletedVolumeInUseError(err.Error())
 	}
 
-	// TODO (verult) Need to convert HTTP status code to DiskNotFound error
-	if err == cloudprovider.DiskNotFound {
+	if _, ok := err.(*DiskNotFoundError); ok {
 		return nil
 	}
 	return err
@@ -808,9 +818,9 @@ func (gce *GCECloud) ResizeDisk(diskToResize string, zoneSet sets.String, oldSiz
 	var err error
 	switch zoneSet.Len() {
 	case 2:
-		disk, err = gce.findRegionalDiskByName(diskToResize)
+		disk, err = gce.getRegionalDiskByName(diskToResize)
 	case 1:
-		disk, err = gce.findDiskByName(diskToResize, zoneSet.UnsortedList()[0])
+		disk, err = gce.getDiskByName(diskToResize, zoneSet.UnsortedList()[0])
 	case 0:
 		disk, err = gce.GetDiskByNameUnknownZone(diskToResize)
 	default:
@@ -885,7 +895,8 @@ func (gce *GCECloud) GetAutoLabelsForPD(name string, zone string) (map[string]st
 		// passed for most cases that we can control, e.g. dynamic volume
 		// provisioning).
 		disk, diskErr = gce.GetDiskByNameUnknownZone(name)
-		if diskErr != nil && diskErr != cloudprovider.DiskNotFound {
+		_, isDiskNotFoundErr := diskErr.(*DiskNotFoundError)
+		if diskErr != nil && !isDiskNotFoundErr {
 			return nil, diskErr
 		}
 
@@ -945,56 +956,90 @@ func (gce *GCECloud) GetAutoLabelsForPD(name string, zone string) (map[string]st
 	return labels, nil
 }
 
+// TODO (verult) can we remove the "findDisk" functions?
 // Returns a GCEDisk for the disk, if it is found in the specified zone.
 // If not found, returns (nil, nil)
 func (gce *GCECloud) findDiskByName(diskName string, zone string) (*GCEDisk, error) {
-	mc := newDiskMetricContextZonal("get", gce.region, zone)
-	disk, err := gce.manager.GetDiskFromCloudProvider(zone, diskName)
-	if err == nil {
-		return disk, mc.Observe(nil)
+	disk, err := gce.getDiskByName(diskName, zone)
+	if _, ok := err.(*DiskNotFoundError); ok {
+		return nil, nil
 	}
-	if !isHTTPErrorCode(err, http.StatusNotFound) {
-		return nil, mc.Observe(err)
-	}
-	return nil, mc.Observe(nil)
+	return disk, err
 }
 
 // Like findDiskByName, but returns an error if the disk is not found
 func (gce *GCECloud) getDiskByName(diskName string, zone string) (*GCEDisk, error) {
-	disk, err := gce.findDiskByName(diskName, zone)
-	if disk == nil && err == nil {
-		// TODO (verult) upgrade disk not found error
-		return nil, fmt.Errorf("GCE persistent disk not found: diskName=%q zone=%q", diskName, zone)
+	mc := newDiskMetricContextZonal("get", gce.region, zone)
+	disk, err := gce.manager.GetDiskFromCloudProvider(zone, diskName)
+	mc.Observe(err)
+
+	if isHTTPErrorCode(err, http.StatusNotFound) {
+		return nil, &DiskNotFoundError{ regional: false, diskName: diskName, diskZone: zone }
 	}
-	return disk, err
+
+	if err != nil {
+		return nil, err
+	}
+	return disk, nil
 }
 
 // Returns a GCEDisk for the regional disk, if it is found.
 // If not found, returns (nil, nil)
 func (gce *GCECloud) findRegionalDiskByName(diskName string) (*GCEDisk, error) {
-	mc := newDiskMetricContextRegional("get", gce.region)
-	disk, err := gce.manager.GetRegionalDiskFromCloudProvider(diskName)
-	if err == nil {
-		return disk, mc.Observe(nil)
-	}
-	if !isHTTPErrorCode(err, http.StatusNotFound) {
-		return nil, mc.Observe(err)
-	}
-	return nil, mc.Observe(nil)
-}
-
-// Like findRegionalDiskByName, but returns an error if the disk is not found
-func (gce *GCECloud) getRegionalDiskByName(diskName string) (*GCEDisk, error) {
-	disk, err := gce.findRegionalDiskByName(diskName)
-	if disk == nil && err == nil {
-		return nil, fmt.Errorf("GCE regional persistent disk not found: diskName=%q", diskName)
+	disk, err := gce.getRegionalDiskByName(diskName)
+	if _, ok := err.(*DiskNotFoundError); ok {
+		return nil, nil
 	}
 	return disk, err
 }
 
+// Like findRegionalDiskByName, but returns an error if the disk is not found
+func (gce *GCECloud) getRegionalDiskByName(diskName string) (*GCEDisk, error) {
+	mc := newDiskMetricContextRegional("get", gce.region)
+	disk, err := gce.manager.GetRegionalDiskFromCloudProvider(diskName)
+	mc.Observe(err)
+
+	if isHTTPErrorCode(err, http.StatusNotFound) {
+		return nil, &DiskNotFoundError{ regional: true, diskName: diskName }
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return disk, nil
+}
+
+// Deletes the disk matching the given name and zone, if it exists.
+// Otherwise returns a DiskNotFoundError
+func (gce *GCECloud) deleteDiskByName(diskName string, zone string) error {
+	mc := newDiskMetricContextZonal("delete", gce.region, zone)
+	err := gce.manager.DeleteDiskOnCloudProvider(zone, diskName)
+	mc.Observe(err)
+
+	if isHTTPErrorCode(err, http.StatusNotFound) {
+		return &DiskNotFoundError{ regional: false, diskName: diskName, diskZone: zone }
+	}
+
+	return err
+}
+
+// Deletes the regional disk matching the given name, if it exists.
+// Otherwise returns a DiskNotFoundError
+func (gce *GCECloud) deleteRegionalDiskByName(diskName string) error {
+	mc := newDiskMetricContextRegional("delete", gce.region)
+	err := gce.manager.DeleteRegionalDiskOnCloudProvider(diskName)
+	mc.Observe(err)
+
+	if isHTTPErrorCode(err, http.StatusNotFound) {
+		return &DiskNotFoundError{ regional: true, diskName: diskName }
+	}
+
+	return err
+}
+
 // Scans all managed zones to return the GCE PD. Only zonal PDs are searched.
 // Prefer getDiskByName, if the zone can be established
-// Return cloudprovider.DiskNotFound if the given disk cannot be found in any zone
+// Return DiskNotFoundError if the given disk cannot be found in any zone
 func (gce *GCECloud) GetDiskByNameUnknownZone(diskName string) (*GCEDisk, error) {
 	// TODO (verult) update comments for the entire function
 	// Note: this is the gotcha right now with GCE PD support:
@@ -1009,15 +1054,16 @@ func (gce *GCECloud) GetDiskByNameUnknownZone(diskName string) (*GCEDisk, error)
 
 	var found *GCEDisk
 	for _, zone := range gce.managedZones {
-		disk, err := gce.findDiskByName(diskName, zone)
+		disk, err := gce.getDiskByName(diskName, zone)
+
+		if _, ok := err.(*DiskNotFoundError); ok {
+			continue
+		}
+
 		if err != nil {
 			return nil, err
 		}
-		// findDiskByName returns (nil,nil) if the disk doesn't exist, so we can't
-		// assume that a disk was found unless disk is non-nil.
-		if disk == nil {
-			continue
-		}
+
 		if found != nil {
 			return nil, fmt.Errorf("GCE PD name was found in multiple zones: %q", diskName)
 		}
@@ -1030,7 +1076,7 @@ func (gce *GCECloud) GetDiskByNameUnknownZone(diskName string) (*GCEDisk, error)
 	glog.Warningf("GCE persistent disk %q not found in managed zones (%s)",
 		diskName, strings.Join(gce.managedZones, ","))
 
-	return nil, cloudprovider.DiskNotFound
+	return nil, &DiskNotFoundError{ regional: false, diskName: diskName }
 }
 
 // encodeDiskTags encodes requested volume tags into JSON string, as GCE does
