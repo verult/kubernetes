@@ -102,7 +102,6 @@ func (attacher *gcePersistentDiskAttacher) Attach(spec *volume.Spec, nodeName ty
 }
 
 func (attacher *gcePersistentDiskAttacher) VolumesAreAttached(specs []*volume.Spec, nodeName types.NodeName) (map[*volume.Spec]bool, error) {
-	// TODO (verult) Clean up logs
 	volumesAttachedCheck := make(map[*volume.Spec]bool)
 	volumePdNameMap := make(map[string]*volume.Spec)
 	deviceNameList := []string{}
@@ -110,7 +109,7 @@ func (attacher *gcePersistentDiskAttacher) VolumesAreAttached(specs []*volume.Sp
 		deviceName, err := getDeviceName(spec)
 		// If error is occurred, skip this volume and move to the next one
 		if err != nil {
-			glog.Errorf("Error getting volume (%q) source : %v", spec.Name(), err)
+			glog.Errorf("Error computing device name for volume (specName: %q) source : %v", spec.Name(), err)
 			continue
 		}
 		deviceNameList = append(deviceNameList, deviceName)
@@ -121,7 +120,7 @@ func (attacher *gcePersistentDiskAttacher) VolumesAreAttached(specs []*volume.Sp
 	if err != nil {
 		// Log error and continue with attach
 		glog.Errorf(
-			"Error checking if PDs (%v) are already attached to current node (%q). err=%v",
+			"Error checking if PDs (with device names: %v) are already attached to current node (%q). err=%v",
 			deviceNameList, nodeName, err)
 		return volumesAttachedCheck, err
 	}
@@ -130,7 +129,7 @@ func (attacher *gcePersistentDiskAttacher) VolumesAreAttached(specs []*volume.Sp
 		if !attached {
 			spec := volumePdNameMap[deviceName]
 			volumesAttachedCheck[spec] = false
-			glog.V(2).Infof("VolumesAreAttached: check volume %q (specName: %q) is no longer attached", deviceName, spec.Name())
+			glog.V(2).Infof("VolumesAreAttached: check volume (specName: %q; deviceName: %q) is no longer attached", spec.Name(), deviceName)
 		}
 	}
 	return volumesAttachedCheck, nil
@@ -258,25 +257,24 @@ func (plugin *gcePersistentDiskPlugin) NewDetacher() (volume.Detacher, error) {
 // Callers are responsible for thread safety between concurrent attach and detach
 // operations.
 func (detacher *gcePersistentDiskDetacher) Detach(volumeName string, nodeName types.NodeName) error {
-	// TODO (verult) Need to fix logging.
 	deviceName := path.Base(volumeName)
 
 	attached, err := detacher.gceDisks.DiskIsAttached(deviceName, nodeName)
 	if err != nil {
 		// Log error and continue with detach
 		glog.Errorf(
-			"Error checking if PD (%q) is already attached to current node (%q). Will continue and try detach anyway. err=%v",
+			"Error checking if PD (deviceName: %q) is already attached to current node (%q). Will continue and try detach anyway. err=%v",
 			deviceName, nodeName, err)
 	}
 
 	if err == nil && !attached {
 		// Volume is not attached to node. Success!
-		glog.Infof("Detach operation is successful. PD %q was not attached to node %q.", deviceName, nodeName)
+		glog.Infof("Detach operation is successful. PD (deviceName: %q) was not attached to node %q.", deviceName, nodeName)
 		return nil
 	}
 
 	if err = detacher.gceDisks.DetachDisk(deviceName, nodeName); err != nil {
-		glog.Errorf("Error detaching PD %q from node %q: %v", deviceName, nodeName, err)
+		glog.Errorf("Error detaching PD (deviceName: %q) from node %q: %v", deviceName, nodeName, err)
 		return err
 	}
 

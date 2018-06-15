@@ -334,7 +334,7 @@ type pdManager interface {
 type gcePersistentDisk struct {
 	volName string
 	podUID  types.UID
-	// Unique identifier of the PD, used to find the disk resource in the provider. // TODO (verult) update comment
+	// Name of the PD, used to find the disk resource in the provider.
 	pdName string
 	// Specifies the partition to mount
 	partition string
@@ -348,7 +348,7 @@ type gcePersistentDisk struct {
 
 type gcePersistentDiskMounter struct {
 	*gcePersistentDisk
-	// TODO (verult) comment
+	// Device name used to attach the disk. Used to identify host mount path.
 	deviceName string
 	// Specifies whether the disk will be mounted as read-only.
 	readOnly bool
