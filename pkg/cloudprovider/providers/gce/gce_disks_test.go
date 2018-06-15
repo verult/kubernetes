@@ -927,13 +927,6 @@ func (manager *FakeServiceManager) GetDiskFromCloudProvider(
 		return nil, &googleapi.Error{Code: http.StatusNotFound }
 	}
 
-	// TODO (verult) Isn't it the Delete call that returns this error?
-	if manager.resourceInUse {
-		errorItem := googleapi.ErrorItem{Reason: "resourceInUseByAnotherResource"}
-		err := &googleapi.Error{Errors: []googleapi.ErrorItem{errorItem}}
-		return nil, err
-	}
-
 	return &GCEDisk{
 		Region:   manager.gceRegion,
 		ZoneInfo: singleZone{lastComponent(zone)},
@@ -994,6 +987,11 @@ func (manager *FakeServiceManager) DeleteDiskOnCloudProvider(
 		return &googleapi.Error{ Code: http.StatusNotFound }
 	}
 
+	if manager.resourceInUse {
+		errorItem := googleapi.ErrorItem{Reason: "resourceInUseByAnotherResource"}
+		return &googleapi.Error{Errors: []googleapi.ErrorItem{errorItem}}
+	}
+
 	delete(manager.zonalDisks, zone)
 
 	switch t := manager.targetAPI; t {
@@ -1015,6 +1013,11 @@ func (manager *FakeServiceManager) DeleteRegionalDiskOnCloudProvider(
 
 	if _, ok := manager.regionalDisks[disk]; !ok {
 		return &googleapi.Error{ Code: http.StatusNotFound }
+	}
+
+	if manager.resourceInUse {
+		errorItem := googleapi.ErrorItem{Reason: "resourceInUseByAnotherResource"}
+		return &googleapi.Error{Errors: []googleapi.ErrorItem{errorItem}}
 	}
 
 	delete(manager.regionalDisks, disk)
