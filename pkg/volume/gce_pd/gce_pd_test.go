@@ -80,7 +80,6 @@ func TestGetAccessModes(t *testing.T) {
 type fakePDManager struct {
 }
 
-// TODO (verult) Create/DeleteVolume logic not tested?
 func (fake *fakePDManager) CreateVolume(c *gcePersistentDiskProvisioner) (volumeID string, volumeSizeGB int, labels map[string]string, fstype string, err error) {
 	labels = make(map[string]string)
 	labels["fakepdmanager"] = "yes"
@@ -95,15 +94,13 @@ func (fake *fakePDManager) DeleteVolume(cd *gcePersistentDiskDeleter) error {
 }
 
 type deviceNameTestCase struct {
-	spec *volume.Spec
-	deviceName string
+	spec               *volume.Spec
+	expectedDeviceName string
 }
 
-// TODO (verult) break into separate tests?
-// TODO (verult) test resize?
 func TestDeviceName(t *testing.T) {
-	plug, teardownFunc, _ := getPDPlugin(t, nil)
-	defer teardownFunc()
+	plug, teardown, _ := getPDPlugin(t, nil)
+	defer teardown()
 
 	tests := []deviceNameTestCase{
 		{
@@ -118,7 +115,7 @@ func TestDeviceName(t *testing.T) {
 					},
 				},
 			},
-			deviceName: "pd",
+			expectedDeviceName: "pd",
 		},
 		{
 			spec: &volume.Spec{
@@ -137,7 +134,7 @@ func TestDeviceName(t *testing.T) {
 					},
 				},
 			}},
-			deviceName: "pd",
+			expectedDeviceName: "pd",
 		},
 		{
 			spec: &volume.Spec{
@@ -157,7 +154,7 @@ func TestDeviceName(t *testing.T) {
 					},
 				},
 			},
-			deviceName: "pd_regional",
+			expectedDeviceName: "pd_regional",
 		},
 	}
 	fakeManager := &fakePDManager{}
@@ -182,16 +179,16 @@ func TestDeviceName(t *testing.T) {
 		}
 
 		mp := fakeMounter.MountPoints[0]
-		if path.Base(mp.Device) != test.deviceName { // TODO (verult) make this independent of spec
-			t.Errorf("Expected device path to end with %v, got: %v", test.deviceName, path.Base(mp.Device))
+		if path.Base(mp.Device) != test.expectedDeviceName {
+			t.Errorf("Expected device path to end with %v, got: %v", test.expectedDeviceName, path.Base(mp.Device))
 		}
 		fakeMounter.MountPoints = nil
 	}
 }
 
 func TestPlugin(t *testing.T) {
-	plug, teardownFunc, rootDir := getPDPlugin(t, nil)
-	defer teardownFunc()
+	plug, teardown, rootDir := getPDPlugin(t, nil)
+	defer teardown()
 
 	spec := &v1.Volume{
 		Name: "vol1",

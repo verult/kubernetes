@@ -276,7 +276,7 @@ func TestCreateDisk_MultiZone(t *testing.T) {
 
 func TestDeleteDisk_Basic(t *testing.T) {
 	/* Arrange */
-	gce, fakeManager, test := initLabelTests()
+	gce, fakeManager, test := initTest()
 	gce.CreateDisk(test.diskName, test.diskType, test.zone, test.sizeGb, nil)
 
 	/* Act */
@@ -294,7 +294,7 @@ func TestDeleteDisk_Basic(t *testing.T) {
 
 func TestDeleteDisk_NotFound(t *testing.T) {
 	/* Arrange */
-	gce, _, test := initLabelTests()
+	gce, _, test := initTest()
 
 	/* Act */
 	err := gce.DeleteDisk(test.diskName, test.zone)
@@ -307,7 +307,7 @@ func TestDeleteDisk_NotFound(t *testing.T) {
 
 func TestDeleteDisk_NotFoundNoZone(t *testing.T) {
 	/* Arrange */
-	gce, _, test := initLabelTests()
+	gce, _, test := initTest()
 
 	/* Act */
 	err := gce.DeleteDisk(test.diskName, "")
@@ -320,7 +320,7 @@ func TestDeleteDisk_NotFoundNoZone(t *testing.T) {
 
 func TestDeleteDisk_ResourceBeingUsed(t *testing.T) {
 	/* Arrange */
-	gce, fakeManager, test := initLabelTests()
+	gce, fakeManager, test := initTest()
 
 	gce.CreateDisk(test.diskName, test.diskType, test.zone, test.sizeGb, nil)
 	fakeManager.resourceInUse = true
@@ -336,7 +336,7 @@ func TestDeleteDisk_ResourceBeingUsed(t *testing.T) {
 
 func TestDeleteDisk_SameDiskMultiZone(t *testing.T) {
 	/* Arrange */
-	gce, _, test := initLabelTests()
+	gce, _, test := initTest()
 	for _, zone := range gce.managedZones {
 		gce.CreateDisk(test.diskName, test.diskType, zone, test.sizeGb, nil)
 	}
@@ -355,7 +355,7 @@ func TestDeleteDisk_SameDiskMultiZone(t *testing.T) {
 
 func TestDeleteDisk_DiffDiskMultiZone(t *testing.T) {
 	/* Arrange */
-	gce, _, test := initLabelTests()
+	gce, _, test := initTest()
 
 	for _, zone := range gce.managedZones {
 		// Ignore diskName inside the test struct as we need different disk names here.
@@ -376,7 +376,7 @@ func TestDeleteDisk_DiffDiskMultiZone(t *testing.T) {
 
 func TestDeleteRegionalDisk_Basic(t *testing.T) {
 	/* Arrange */
-	gce, fakeManager, test := initLabelTests()
+	gce, fakeManager, test := initTest()
 	gce.CreateRegionalDisk(test.diskName, test.diskType, test.replicaZones, test.sizeGb, nil)
 
 	/* Act */
@@ -394,7 +394,7 @@ func TestDeleteRegionalDisk_Basic(t *testing.T) {
 
 func TestDeleteRegionalDisk_NotFound(t *testing.T) {
 	/* Arrange */
-	gce, _, test := initLabelTests()
+	gce, _, test := initTest()
 
 	/* Act */
 	err := gce.DeleteRegionalDisk(test.diskName)
@@ -407,7 +407,7 @@ func TestDeleteRegionalDisk_NotFound(t *testing.T) {
 
 func TestDeleteRegionalDisk_ResourceBeingUsed(t *testing.T) {
 	/* Arrange */
-	gce, fakeManager, test := initLabelTests()
+	gce, fakeManager, test := initTest()
 
 	gce.CreateRegionalDisk(test.diskName, test.diskType, test.replicaZones, test.sizeGb, nil)
 	fakeManager.resourceInUse = true
@@ -423,7 +423,7 @@ func TestDeleteRegionalDisk_ResourceBeingUsed(t *testing.T) {
 
 func TestDeleteDisk_ZonalRegional(t *testing.T) {
 	/* Arrange */
-	gce, _, test := initLabelTests()
+	gce, _, test := initTest()
 	gce.CreateDisk(test.diskName, test.diskType, test.zone, test.sizeGb, nil)
 	gce.CreateRegionalDisk(test.diskName, test.diskType, test.replicaZones, test.sizeGb, nil)
 
@@ -438,7 +438,7 @@ func TestDeleteDisk_ZonalRegional(t *testing.T) {
 
 func TestGetAutoLabelsForPD_Basic(t *testing.T) {
 	/* Arrange */
-	gce, _, test := initLabelTests()
+	gce, _, test := initTest()
 	gce.CreateDisk(test.diskName, test.diskType, test.zone, test.sizeGb, nil)
 
 	/* Act */
@@ -459,7 +459,7 @@ func TestGetAutoLabelsForPD_Basic(t *testing.T) {
 
 func TestGetAutoLabelsForPD_BasicRegional(t *testing.T) {
 	/* Arrange */
-	gce, _, test := initLabelTests()
+	gce, _, test := initTest()
 	gce.CreateRegionalDisk(test.diskName, test.diskType, test.replicaZones, test.sizeGb, nil)
 
 	/* Act */
@@ -485,7 +485,7 @@ func TestGetAutoLabelsForPD_BasicRegional(t *testing.T) {
 
 func TestGetAutoLabelsForPD_NoZone(t *testing.T) {
 	/* Arrange */
-	gce, _, test := initLabelTests()
+	gce, _, test := initTest()
 	gce.CreateDisk(test.diskName, test.diskType, test.zone, test.sizeGb, nil)
 
 	/* Act */
@@ -506,7 +506,7 @@ func TestGetAutoLabelsForPD_NoZone(t *testing.T) {
 
 func TestGetAutoLabelsForPD_NoZoneRegional(t *testing.T) {
 	/* Arrange */
-	gce, _, test := initLabelTests()
+	gce, _, test := initTest()
 	gce.CreateRegionalDisk(test.diskName, test.diskType, test.replicaZones, test.sizeGb, nil)
 
 	/* Act */
@@ -532,7 +532,7 @@ func TestGetAutoLabelsForPD_NoZoneRegional(t *testing.T) {
 
 func TestGetAutoLabelsForPD_DiskNotFound(t *testing.T) {
 	/* Arrange */
-	gce, _, test := initLabelTests()
+	gce, _, test := initTest()
 
 	/* Act */
 
@@ -546,7 +546,7 @@ func TestGetAutoLabelsForPD_DiskNotFound(t *testing.T) {
 
 func TestGetAutoLabelsForPD_DiskNotFoundRegional(t *testing.T) {
 	/* Arrange */
-	gce, _, test := initLabelTests()
+	gce, _, test := initTest()
 
 	/* Act */
 	_, err := gce.GetAutoLabelsForPD(test.diskName, test.replicaZonesLabel)
@@ -559,7 +559,7 @@ func TestGetAutoLabelsForPD_DiskNotFoundRegional(t *testing.T) {
 
 func TestGetAutoLabelsForPD_DiskNotFoundNoZone(t *testing.T) {
 	/* Arrange */
-	gce, _, test := initLabelTests()
+	gce, _, test := initTest()
 
 	/* Act */
 	_, err := gce.GetAutoLabelsForPD(test.diskName, "")
@@ -572,7 +572,7 @@ func TestGetAutoLabelsForPD_DiskNotFoundNoZone(t *testing.T) {
 
 func TestGetAutoLabelsForPD_DupDisk(t *testing.T) {
 	/* Arrange */
-	gce, _, test := initLabelTests()
+	gce, _, test := initTest()
 	for _, zone := range gce.managedZones {
 		gce.CreateDisk(test.diskName, test.diskType, zone, test.sizeGb, nil)
 	}
@@ -595,7 +595,7 @@ func TestGetAutoLabelsForPD_DupDisk(t *testing.T) {
 
 func TestGetAutoLabelsForPD_DupDiskNoZone(t *testing.T) {
 	/* Arrange */
-	gce, _, test := initLabelTests()
+	gce, _, test := initTest()
 	for _, zone := range gce.managedZones {
 		gce.CreateDisk(test.diskName, test.diskType, zone, test.sizeGb, nil)
 	}
@@ -611,7 +611,7 @@ func TestGetAutoLabelsForPD_DupDiskNoZone(t *testing.T) {
 
 func TestGetAutoLabelsForPD_ZonalRegionalGetZonal(t *testing.T) {
 	/* Arrange */
-	gce, _, test := initLabelTests()
+	gce, _, test := initTest()
 	gce.CreateDisk(test.diskName, test.diskType, test.zone, test.sizeGb, nil)
 	gce.CreateRegionalDisk(test.diskName, test.diskType, test.replicaZones, test.sizeGb, nil)
 
@@ -633,7 +633,7 @@ func TestGetAutoLabelsForPD_ZonalRegionalGetZonal(t *testing.T) {
 
 func TestGetAutoLabelsForPD_ZonalRegionalGetRegional(t *testing.T) {
 	/* Arrange */
-	gce, _, test := initLabelTests()
+	gce, _, test := initTest()
 	gce.CreateDisk(test.diskName, test.diskType, test.zone, test.sizeGb, nil)
 	gce.CreateRegionalDisk(test.diskName, test.diskType, test.replicaZones, test.sizeGb, nil)
 
@@ -660,7 +660,7 @@ func TestGetAutoLabelsForPD_ZonalRegionalGetRegional(t *testing.T) {
 
 func TestGetAutoLabelsForPD_ZonalRegionalNoZone(t *testing.T) {
 	/* Arrange */
-	gce, _, test := initLabelTests()
+	gce, _, test := initTest()
 	gce.CreateDisk(test.diskName, test.diskType, test.zone, test.sizeGb, nil)
 	gce.CreateRegionalDisk(test.diskName, test.diskType, test.replicaZones, test.sizeGb, nil)
 
@@ -675,7 +675,7 @@ func TestGetAutoLabelsForPD_ZonalRegionalNoZone(t *testing.T) {
 
 func TestDiskExists_Positive(t *testing.T) {
 	// Arrange
-	gce, _, test := initLabelTests()
+	gce, _, test := initTest()
 	gce.CreateDisk(test.diskName, test.diskType, test.zone, test.sizeGb, nil)
 
 	// Act
@@ -692,7 +692,7 @@ func TestDiskExists_Positive(t *testing.T) {
 
 func TestDiskExists_Negative(t *testing.T) {
 	// Arrange
-	gce, _, test := initLabelTests()
+	gce, _, test := initTest()
 
 	// Act
 	exists, err := gce.DiskExists(test.diskName, test.zone)
@@ -708,7 +708,7 @@ func TestDiskExists_Negative(t *testing.T) {
 
 func TestDiskExists_WrongZone(t *testing.T) {
 	// Arrange
-	gce, _, test := initLabelTests()
+	gce, _, test := initTest()
 	gce.CreateDisk(test.diskName, test.diskType, test.zone, test.sizeGb, nil)
 
 	// Act
@@ -723,9 +723,10 @@ func TestDiskExists_WrongZone(t *testing.T) {
 	}
 }
 
-// TODO (verult) rename - it's no longer only used for label tests
-// labelTestCase contains a list of attributes used by tests for GetAutoLabelsForPD functions.
-type labelTestCase struct {
+// TODO (verult) refactor the rest of tests to use this
+// diskParams contains a list of common attributes used by tests.
+// It is pre-populated by the initTest() function.
+type diskParams struct {
 	gceRegion string
 	diskName string
 	diskType string
@@ -735,10 +736,9 @@ type labelTestCase struct {
 	replicaZonesLabel string // for regional disks
 }
 
-// TODO (verult) rename - it's no longer only used for label tests
-// initLabelTests generates the GCE cloud client and a set of disk parameters for testing
-// GetAutoLabelsForPD functions.
-func initLabelTests() (GCECloud, *FakeServiceManager, *labelTestCase) {
+// initTest generates the GCE cloud client and a set of common disk parameters
+// to be used by tests.
+func initTest() (GCECloud, *FakeServiceManager, *diskParams) {
 	gceProjectId := "test-project"
 	gceRegion := "us-west1"
 	zonesWithNodes := []string{"us-west1-b", "asia-southeast1-a"}
@@ -756,7 +756,7 @@ func initLabelTests() (GCECloud, *FakeServiceManager, *labelTestCase) {
 		nodeInformerSynced: func() bool { return true },
 	}
 
-	return gce, fakeManager, &labelTestCase{
+	return gce, fakeManager, &diskParams{
 		gceRegion, diskName, diskType, sizeGb, zonesWithNodes[0], replicaZones, replicaZonesLabel,
 	}
 }

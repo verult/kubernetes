@@ -191,6 +191,7 @@ var _ = utils.SIGDescribe("PersistentVolumes GCEPD Multizone", func() {
 		// Enforce binding only within test space via selector labels
 		volLabel := labels.Set{framework.VolumeSelectorKey: ns}
 		selector := metav1.SetAsLabelSelector(volLabel)
+
 		By("Initializing Test Spec")
 		diskName, err = framework.CreatePDWithRetry()
 		Expect(err).NotTo(HaveOccurred())
@@ -229,21 +230,11 @@ var _ = utils.SIGDescribe("PersistentVolumes GCEPD Multizone", func() {
 	})
 
 	It("should successfully clean up a PV when PDs with the same disk name exists in multiple zones", func() {
-		// TODO (verult) split into "By"
-		// Pre-provision disks in two different zones
-		// Create PV pointing to one of the disks, with reclaimPolicy Delete
-		// Create PVC
-		// Delete PVC
-		// Wait for PV deletion
-		// Verify with GCE the disk in the correct zone is deleted.
-
-		framework.SkipUnlessMultizone(c)
-
 		zones, err := framework.GetClusterZones(c)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(zones.Len()).To(BeNumerically(">", 1))
 
-		// Create a PD with the same disk name in a different zone
+		By("Create a PD with the same disk name in a different zone")
 		zoneTaken := pv.Labels[apis.LabelZoneFailureDomain]
 		var zone string
 		for zone = range zones {
@@ -255,11 +246,13 @@ var _ = utils.SIGDescribe("PersistentVolumes GCEPD Multizone", func() {
 		}
 		defer framework.DeletePDWithRetryAndZone(diskName, zone)
 
+		By("Delete PVC")
 		err = framework.DeletePersistentVolumeClaim(c, pvc.Name, ns)
 		Expect(err).NotTo(HaveOccurred())
 		err = framework.WaitForPersistentVolumeDeleted(c, pv.Name, framework.Poll, framework.PVDeletingTimeout)
 		Expect(err).NotTo(HaveOccurred())
 
+		By("Verify the correct disk is deleted")
 		exists, err := framework.PDExists(diskName, zoneTaken)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(exists).To(BeFalse())

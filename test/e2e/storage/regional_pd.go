@@ -170,7 +170,8 @@ func testDiskNameCollision(f *framework.Framework, c clientset.Interface, ns str
 	}()
 	framework.ExpectNoError(framework.WaitOnPVandPVC(c, ns, pv, pvc))
 
-	pod, err := framework.CreateClientPod(c, ns, pvc)
+	pod := framework.MakeWritePod(ns, pvc)
+	pod, err = c.CoreV1().Pods(ns).Create(pod)
 
 	By("creating PV, PVC, and pod for regional disk")
 	pvConfig.Labels[apis.LabelZoneFailureDomain] = util.ZonesSetToLabelValue(replicaZones)
@@ -183,9 +184,13 @@ func testDiskNameCollision(f *framework.Framework, c clientset.Interface, ns str
 	}()
 	framework.ExpectNoError(framework.WaitOnPVandPVC(c, ns, pvRegional, pvcRegional))
 
-	podRegional, err := framework.CreateClientPod(c, ns, pvc)
+	podRegional, err := framework.CreatePod(c, ns, nil, []*v1.PersistentVolumeClaim{pvcRegional}, true,
+	"if [ -f /mnt/volume1/SUCCESS ]; then echo FileExists; fi")
 
-	// TODO (verult) make sure mounted disks are distinct between the two pods
+	By("verify pod with regional disk cannot access data written previously")
+	logs, err := framework.GetPodLogs(c, ns, podRegional.Name, "")
+	Expect(err).NotTo(HaveOccurred())
+	Expect(len(logs)).To(Equal(0), fmt.Sprintf("expected no log messages from container but got: %s", logs))
 
 	By("delete pods")
 	framework.ExpectNoError(framework.DeletePodWithWait(f, c, pod))
@@ -531,6 +536,7 @@ func createBasePVPVCConfig(diskName string, ns string) (framework.PersistentVolu
 			},
 		},
 		Prebind: nil,
+		ReclaimPolicy: v1.PersistentVolumeReclaimDelete,
 	}
 	emptyStorageClass := ""
 	pvcConfig := framework.PersistentVolumeClaimConfig{

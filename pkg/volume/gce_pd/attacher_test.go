@@ -254,52 +254,48 @@ func TestAttachDetach(t *testing.T) {
 		t.Logf("Test %q succeeded", testcase.name)
 	}
 }
-//
-//type getDeviceMountPathTestCase struct {
-//	spec *volume.Spec
-//	expectedPath string
-//	expectedErr error
-//}
 
-// TODO (verult) test WaitForAttach, GetDeviceMountPath
+func genGetDeviceMountPathTestFunc(spec *volume.Spec, expectedDeviceName string) func(*testcase) error {
+	return func(t *testcase) error {
+		attacher := newAttacher(t)
+		mntPath, err := attacher.GetDeviceMountPath(spec)
+
+		if err != nil {
+			return err
+		}
+
+		deviceName := path.Base(mntPath)
+
+		if deviceName != expectedDeviceName {
+			return fmt.Errorf("expected device name: %q; got: %q", expectedDeviceName, deviceName)
+		}
+
+		return nil
+	}
+}
+
 func TestGetDeviceMountPath(t *testing.T) {
 	tests := []testcase{
 		{
 			name: "GetDeviceMountPath_InlineVolume",
-			test: func(testcase *testcase) error {
-				attacher := newAttacher(testcase)
-				spec := &volume.Spec{
+			test: genGetDeviceMountPathTestFunc(
+				&volume.Spec{
 					Volume: &v1.Volume{
 						Name: "vol1",
 						VolumeSource: v1.VolumeSource{
 							GCEPersistentDisk: &v1.GCEPersistentDiskVolumeSource{
 								PDName: "pd",
-								FSType: "ext4",
 							},
 						},
 					},
-				}
-				mntPath, err := attacher.GetDeviceMountPath(spec)
-
-				if err != nil {
-					return err
-				}
-
-				deviceName := path.Base(mntPath)
-				expectedDeviceName := "pd"
-
-				if deviceName != expectedDeviceName {
-					return fmt.Errorf("expected device name: %q; got: %q", expectedDeviceName, deviceName)
-				}
-
-				return nil
-			},
+				},
+				"pd" /* expectedDeviceName */,
+			),
 		},
 		{
 			name: "GetDeviceMountPath_PV",
-			test: func(testcase *testcase) error {
-				attacher := newAttacher(testcase)
-				spec := &volume.Spec{
+			test: genGetDeviceMountPathTestFunc(
+				&volume.Spec{
 					PersistentVolume: &v1.PersistentVolume{
 						ObjectMeta: metav1.ObjectMeta{
 							Labels: map[string]string{
@@ -310,32 +306,17 @@ func TestGetDeviceMountPath(t *testing.T) {
 							PersistentVolumeSource: v1.PersistentVolumeSource{
 								GCEPersistentDisk: &v1.GCEPersistentDiskVolumeSource{
 									PDName:   "pd",
-									ReadOnly: false,
 								},
 							},
 						},
-					}}
-				mntPath, err := attacher.GetDeviceMountPath(spec)
-
-				if err != nil {
-					return err
-				}
-
-				deviceName := path.Base(mntPath)
-				expectedDeviceName := "pd"
-
-				if deviceName != expectedDeviceName {
-					return fmt.Errorf("expected device name: %q; got: %q", expectedDeviceName, deviceName)
-				}
-
-				return nil
-			},
+					}},
+					"pd" /* expectedDeviceName */,
+			),
 		},
 		{
 			name: "GetDeviceMountPath_PVRegional",
-			test: func(testcase *testcase) error {
-				attacher := newAttacher(testcase)
-				spec := &volume.Spec{
+			test: genGetDeviceMountPathTestFunc(
+				&volume.Spec{
 					PersistentVolume: &v1.PersistentVolume{
 						ObjectMeta: metav1.ObjectMeta{
 							Labels: map[string]string{
@@ -346,27 +327,13 @@ func TestGetDeviceMountPath(t *testing.T) {
 							PersistentVolumeSource: v1.PersistentVolumeSource{
 								GCEPersistentDisk: &v1.GCEPersistentDiskVolumeSource{
 									PDName:   "pd",
-									ReadOnly: false,
 								},
 							},
 						},
 					},
-				}
-				mntPath, err := attacher.GetDeviceMountPath(spec)
-
-				if err != nil {
-					return err
-				}
-
-				deviceName := path.Base(mntPath)
-				expectedDeviceName := "pd_regional"
-
-				if deviceName != expectedDeviceName {
-					return fmt.Errorf("expected device name: %q; got: %q", expectedDeviceName, deviceName)
-				}
-
-				return nil
-			},
+				},
+				"pd_regional" /* expectedDeviceName */,
+			),
 		},
 	}
 
@@ -459,7 +426,7 @@ type attachCall struct {
 }
 
 type detachCall struct {
-	devicePath string
+	deviceName string
 	nodeName   types.NodeName
 	ret        error
 }
@@ -474,7 +441,6 @@ type diskIsAttachedCall struct {
 var _ gce.Disks = &testcase{}
 
 func (testcase *testcase) AttachDisk(diskName string, nodeName types.NodeName, deviceName string, readOnly bool, regional bool) error {
-	// TODO (verult) include deviceName check
 	expected := &testcase.attach
 
 	if expected.diskName == "" && expected.nodeName == "" {
@@ -494,7 +460,7 @@ func (testcase *testcase) AttachDisk(diskName string, nodeName types.NodeName, d
 		return errors.New("Unexpected AttachDisk call: wrong nodeName")
 	}
 
-	if expected.deviceName!= deviceName {
+	if expected.deviceName != deviceName {
 		testcase.t.Errorf("Unexpected AttachDisk call: expected deviceName %s, got %s", expected.deviceName, deviceName)
 		return errors.New("Unexpected AttachDisk call: wrong deviceName")
 	}
@@ -514,19 +480,18 @@ func (testcase *testcase) AttachDisk(diskName string, nodeName types.NodeName, d
 	return expected.ret
 }
 
-// TODO (verult) refactor devicePath to deviceName
-func (testcase *testcase) DetachDisk(devicePath string, nodeName types.NodeName) error {
+func (testcase *testcase) DetachDisk(deviceName string, nodeName types.NodeName) error {
 	expected := &testcase.detach
 
-	if expected.devicePath == "" && expected.nodeName == "" {
+	if expected.deviceName == "" && expected.nodeName == "" {
 		// testcase.detach looks uninitialized, test did not expect to call
 		// DetachDisk
 		testcase.t.Errorf("Unexpected DetachDisk call!")
 		return errors.New("Unexpected DetachDisk call!")
 	}
 
-	if expected.devicePath != devicePath {
-		testcase.t.Errorf("Unexpected DetachDisk call: expected devicePath %s, got %s", expected.devicePath, devicePath)
+	if expected.deviceName != deviceName {
+		testcase.t.Errorf("Unexpected DetachDisk call: expected deviceName %s, got %s", expected.deviceName, deviceName)
 		return errors.New("Unexpected DetachDisk call: wrong diskName")
 	}
 
@@ -535,7 +500,7 @@ func (testcase *testcase) DetachDisk(devicePath string, nodeName types.NodeName)
 		return errors.New("Unexpected DetachDisk call: wrong nodeName")
 	}
 
-	glog.V(4).Infof("DetachDisk call: %s, %s, returning %v", devicePath, nodeName, expected.ret)
+	glog.V(4).Infof("DetachDisk call: %s, %s, returning %v", deviceName, nodeName, expected.ret)
 
 	return expected.ret
 }
@@ -585,7 +550,7 @@ func (testcase *testcase) DeleteRegionalDisk(diskToDelete string) error {
 	return errors.New("Not implemented")
 }
 
-func (testcase *testcase) GetAutoLabelsForPD(name string, zone string, regional *bool) (map[string]string, error) {
+func (testcase *testcase) GetAutoLabelsForPD(name string, zone string) (map[string]string, error) {
 	return map[string]string{}, errors.New("Not implemented")
 }
 
@@ -595,4 +560,8 @@ func (testcase *testcase) ResizeDisk(
 	oldSize resource.Quantity,
 	newSize resource.Quantity) (resource.Quantity, error) {
 	return oldSize, errors.New("Not implemented")
+}
+
+func (testcase *testcase) DiskExists(name string, zone string) (bool, error) {
+	return false, errors.New("Not implemented")
 }
