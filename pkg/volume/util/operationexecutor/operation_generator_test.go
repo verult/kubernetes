@@ -48,7 +48,7 @@ func TestOperationGenerator_GenerateUnmapVolumeFunc_PluginName(t *testing.T) {
 
 	testcases := []testcase{
 		{
-			name:       "gce pd plugin: csi migration disabled",
+			name:       "gce pd plugin: csi migration disable",
 			pluginName: plugins.GCEPDInTreePluginName,
 			pvSpec: v1.PersistentVolumeSpec{
 				PersistentVolumeSource: v1.PersistentVolumeSource{
