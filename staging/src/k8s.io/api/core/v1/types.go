@@ -333,19 +333,26 @@ type PersistentVolumeSpec struct {
 	Capacity ResourceList `json:"capacity,omitempty" protobuf:"bytes,1,rep,name=capacity,casttype=ResourceList,castkey=ResourceName"`
 	// The actual volume backing the persistent volume.
 	PersistentVolumeSource `json:",inline" protobuf:"bytes,2,opt,name=persistentVolumeSource"`
-	// AccessModes contains all ways the volume can be mounted.
+	// Describes the volume's access modes. Possible values are:
+	// * ReadWriteOnce - can be mounted read/write mode to exactly 1 node.
+	// * ReadOnlyMany - can be mounted in read-only mode to many nodes.
+	// * ReadWriteMany - can be mounted in read/write mode to many nodes.
 	// More info: https://kubernetes.io/docs/concepts/storage/persistent-volumes#access-modes
 	// +optional
 	AccessModes []PersistentVolumeAccessMode `json:"accessModes,omitempty" protobuf:"bytes,3,rep,name=accessModes,casttype=PersistentVolumeAccessMode"`
-	// ClaimRef is part of a bi-directional binding between PersistentVolume and PersistentVolumeClaim.
+	// Part of a bi-directional binding between PersistentVolume and PersistentVolumeClaim.
 	// Expected to be non-nil when bound.
 	// claim.VolumeName is the authoritative bind between PV and PVC.
+	// When set to non-nil value, PVC.Spec.Selector of the referenced PVC is
+	// ignored, i.e. labels of this PV do not need to match PVC selector.
 	// More info: https://kubernetes.io/docs/concepts/storage/persistent-volumes#binding
 	// +optional
 	ClaimRef *ObjectReference `json:"claimRef,omitempty" protobuf:"bytes,4,opt,name=claimRef"`
 	// What happens to a persistent volume when released from its claim.
-	// Valid options are Retain (default for manually created PersistentVolumes), Delete (default
-	// for dynamically provisioned PersistentVolumes), and Recycle (deprecated).
+	// Valid options are
+	// * Retain (default for manually created PersistentVolumes)
+	// * Delete (default for dynamically provisioned PersistentVolumes)
+	// * Recycle (deprecated)
 	// Recycle must be supported by the volume plugin underlying this PersistentVolume.
 	// More info: https://kubernetes.io/docs/concepts/storage/persistent-volumes#reclaiming
 	// +optional
@@ -359,11 +366,17 @@ type PersistentVolumeSpec struct {
 	// More info: https://kubernetes.io/docs/concepts/storage/persistent-volumes/#mount-options
 	// +optional
 	MountOptions []string `json:"mountOptions,omitempty" protobuf:"bytes,7,opt,name=mountOptions"`
-	// volumeMode defines if a volume is intended to be used with a formatted filesystem
-	// or to remain in raw block state. Value of Filesystem is implied when not included in spec.
+	// Describes the volume mode. Can be one of the following:
+	// * Filesystem - the volume contains a filesystem. If it doesn't,
+	//   the storage plugin creates a filesystem before mounting it for the
+	//   first time.
+	// * Block - the volume will not be formatted with a filesystem and will
+	//   remain a raw block device.
+	// Value of Filesystem is the default when not included in spec.
+	// More info: https://kubernetes.io/docs/concepts/storage/persistent-volumes/#volume-mode
 	// +optional
 	VolumeMode *PersistentVolumeMode `json:"volumeMode,omitempty" protobuf:"bytes,8,opt,name=volumeMode,casttype=PersistentVolumeMode"`
-	// NodeAffinity defines constraints that limit what nodes this volume can be accessed from.
+	// Defines constraints that limit what nodes this volume can be accessed from.
 	// This field influences the scheduling of pods that use this volume.
 	// +optional
 	NodeAffinity *VolumeNodeAffinity `json:"nodeAffinity,omitempty" protobuf:"bytes,9,opt,name=nodeAffinity"`
@@ -396,7 +409,7 @@ type PersistentVolumeMode string
 const (
 	// PersistentVolumeBlock means the volume will not be formatted with a filesystem and will remain a raw block device.
 	PersistentVolumeBlock PersistentVolumeMode = "Block"
-	// PersistentVolumeFilesystem means the volume will be or is formatted with a filesystem.
+	// PersistentVolumeFilesystem means the volume contains a filesystem. If it doesn't, Kubernetes creates a filesystem before mounting it for the first time.
 	PersistentVolumeFilesystem PersistentVolumeMode = "Filesystem"
 )
 
@@ -469,26 +482,62 @@ type PersistentVolumeClaimList struct {
 // PersistentVolumeClaimSpec describes the common attributes of storage devices
 // and allows a Source for provider-specific attributes
 type PersistentVolumeClaimSpec struct {
-	// AccessModes contains the desired access modes the volume should have.
+	// Contains the types of access modes the volume should have. Valid access
+	// modes include:
+	// * ReadWriteOnce - can be mounted read/write mode to exactly 1 node.
+	// * ReadOnlyMany - can be mounted in read-only mode to many nodes.
+	// * ReadWriteMany - can be mounted in read/write mode to many nodes.
+	// In addition, storage plugins typically further restrict what access modes
+	// are allowed for a given type of volume.
 	// More info: https://kubernetes.io/docs/concepts/storage/persistent-volumes#access-modes-1
 	// +optional
 	AccessModes []PersistentVolumeAccessMode `json:"accessModes,omitempty" protobuf:"bytes,1,rep,name=accessModes,casttype=PersistentVolumeAccessMode"`
-	// A label query over volumes to consider for binding.
+	// A label query over volumes to consider for binding. This selector is
+	// ignored when volumeName is set.
+	// A claim with a non-empty selector can't have a PersistentVolume
+	// dynamically provisioned for it.
 	// +optional
 	Selector *metav1.LabelSelector `json:"selector,omitempty" protobuf:"bytes,4,opt,name=selector"`
-	// Resources represents the minimum resources the volume should have.
+	// Represents the minimum resources the volume should have.
 	// More info: https://kubernetes.io/docs/concepts/storage/persistent-volumes#resources
 	// +optional
 	Resources ResourceRequirements `json:"resources,omitempty" protobuf:"bytes,2,opt,name=resources"`
-	// VolumeName is the binding reference to the PersistentVolume backing this claim.
+	// The binding reference to the PersistentVolume backing this claim. When
+	// set to non-empty value, selector is not evaluated.
 	// +optional
 	VolumeName string `json:"volumeName,omitempty" protobuf:"bytes,3,opt,name=volumeName"`
 	// Name of the StorageClass required by the claim.
+	// If the value is "" (an empty string), the claim can only be bound to a
+	// PersistentVolume with no StorageClass (the storageClassName field is
+	// either unset or set to "").
+	// If this field is not set, the behavior depends on whether the
+	// DefaultStorageClass admission plugin is turned on.
+	// * If it is turned on, the administrator may specify a default
+	//   StorageClass. This claim can be bound only to PersistentVolumes of that
+	//   default. If the administrator does not specify a default, the cluster
+	//   responds to PVC creation as if the admission plugin were turned off. If
+	//   more than one default is specified, the admission plugin forbids the
+	//   creation of all PVCs.
+	// * If it is turned off, there is no notion of a default StorageClass. This
+	//   claim can be bound only to PersistentVolumes that have no StorageClass
+	//   (the storageClassName field is either unset or set to ""), i.e. it is
+	//   treated the same way as a claim that has this field set to "".
+	// When a claim specifies a selector in addition to requesting a
+	// StorageClass, the requirements are ANDed together: only a
+	// PersistentVolume of the requested class and with the requested labels may
+	// be bound to the claim.
 	// More info: https://kubernetes.io/docs/concepts/storage/persistent-volumes#class-1
 	// +optional
 	StorageClassName *string `json:"storageClassName,omitempty" protobuf:"bytes,5,opt,name=storageClassName"`
-	// volumeMode defines what type of volume is required by the claim.
-	// Value of Filesystem is implied when not included in claim spec.
+	// Defines what volume mode is required by the claim. Can be one of the
+	// following:
+	// * Filesystem - the volume contains a filesystem. If it doesn't,
+	//   the storage plugin creates a filesystem before mounting it for the
+	//   first time.
+	// * Block - the volume will not be formatted with a filesystem and will
+	//   remain a raw block device.
+	// Value of Filesystem is the default when not included in spec.
+	// More info: https://kubernetes.io/docs/concepts/storage/persistent-volumes/#volume-modes
 	// +optional
 	VolumeMode *PersistentVolumeMode `json:"volumeMode,omitempty" protobuf:"bytes,6,opt,name=volumeMode,casttype=PersistentVolumeMode"`
 	// This field can be used to specify either:
